@@ -1,0 +1,263 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar: Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedOwner() {
+      return isVerified() && request.auth.token.email == 'rakhijannatulferdous4@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedOwner() ||
+        (isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isValidCategory(cat) {
+      return cat in [
+        'Analog Watches',
+        'Digital Watches',
+        'Smartwatches',
+        'TWS Earbuds',
+        'Power Banks',
+        'Chargers & Cables',
+        'Bluetooth Speakers',
+        'Neckbands',
+        'Gadgets & Accessories'
+      ];
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'id',
+          'brand',
+          'model',
+          'color',
+          'category',
+          'connectivity',
+          'capacity_spec',
+          'display_buying_price',
+          'min_selling_price',
+          'stock_count',
+          'image_url',
+          'description',
+          'ownerEmail',
+          'created_at',
+          'updated_at'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'product_name',
+          'brand',
+          'model',
+          'color',
+          'category',
+          'connectivity',
+          'capacity_spec',
+          'display_buying_price',
+          'min_selling_price',
+          'stock_count',
+          'image_url',
+          'description',
+          'ownerEmail',
+          'created_at',
+          'updated_at'
+        ]) &&
+        isValidId(data.id) &&
+        (!('product_name' in data) || (data.product_name is string && data.product_name.size() <= 160)) &&
+        data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 80 &&
+        data.model is string && data.model.size() >= 1 && data.model.size() <= 120 &&
+        data.color is string && data.color.size() >= 1 && data.color.size() <= 80 &&
+        data.category is string && isValidCategory(data.category) &&
+        data.connectivity is string && data.connectivity.size() >= 1 && data.connectivity.size() <= 100 &&
+        data.capacity_spec is string && data.capacity_spec.size() >= 1 && data.capacity_spec.size() <= 100 &&
+        data.display_buying_price is number && data.display_buying_price >= 0 && data.display_buying_price <= 100000000 &&
+        data.min_selling_price is number && data.min_selling_price >= 0 && data.min_selling_price <= 100000000 &&
+        data.stock_count is int && data.stock_count >= 0 && data.stock_count <= 1000000 &&
+        data.image_url is string && data.image_url.size() <= 500000 &&
+        data.description is string && data.description.size() <= 1200 &&
+        data.ownerEmail is string && data.ownerEmail.size() >= 3 && data.ownerEmail.size() <= 160 &&
+        data.created_at is timestamp &&
+        data.updated_at is timestamp;
+    }
+
+    function isValidProductCost(data, productId) {
+      return data.keys().hasAll(['product_id', 'real_buying_price', 'ownerEmail', 'updated_at']) &&
+        data.keys().hasOnly(['product_id', 'real_buying_price', 'ownerEmail', 'updated_at']) &&
+        data.product_id == productId &&
+        isValidId(data.product_id) &&
+        data.real_buying_price is number && data.real_buying_price >= 0 && data.real_buying_price <= 100000000 &&
+        data.ownerEmail is string && data.ownerEmail.size() >= 3 && data.ownerEmail.size() <= 160 &&
+        data.updated_at is timestamp;
+    }
+
+    function isValidSalesMemo(data, memoId) {
+      return data.keys().hasAll([
+          'id',
+          'invoice_number',
+          'customer_name',
+          'customer_phone',
+          'payment_method',
+          'discount_amount',
+          'total_amount',
+          'notes',
+          'items',
+          'ownerEmail',
+          'created_at'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'invoice_number',
+          'customer_name',
+          'customer_phone',
+          'payment_method',
+          'discount_amount',
+          'total_amount',
+          'notes',
+          'items',
+          'ownerEmail',
+          'created_at'
+        ]) &&
+        data.id == memoId &&
+        isValidId(data.id) &&
+        data.invoice_number is string && data.invoice_number.size() >= 1 && data.invoice_number.size() <= 64 &&
+        data.customer_name is string && data.customer_name.size() >= 1 && data.customer_name.size() <= 120 &&
+        data.customer_phone is string && data.customer_phone.size() <= 32 &&
+        data.payment_method in ['Cash', 'bKash', 'Nagad', 'Card'] &&
+        data.discount_amount is number && data.discount_amount >= 0 && data.discount_amount <= 100000000 &&
+        data.total_amount is number && data.total_amount >= 0 && data.total_amount <= 100000000 &&
+        data.notes is string && data.notes.size() <= 500 &&
+        data.items is list && data.items.size() >= 1 && data.items.size() <= 50 &&
+        data.items[0] is map &&
+        data.ownerEmail is string && data.ownerEmail.size() >= 3 && data.ownerEmail.size() <= 160 &&
+        data.created_at is timestamp;
+    }
+
+    function isValidAdminDoc(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'created_at']) &&
+        data.keys().hasOnly(['uid', 'email', 'created_at']) &&
+        data.uid == uid &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        data.created_at is timestamp;
+    }
+
+    // Public Storefront Products (readable by all visitors; writable only by verified admins)
+    match /products/{productId} {
+      allow get: if isValidId(productId);
+      allow list: if resource.data.stock_count >= 0;
+
+      allow create: if isAdmin() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        incoming().id == productId &&
+        incoming().ownerEmail == request.auth.token.email &&
+        incoming().created_at == request.time &&
+        incoming().updated_at == request.time;
+
+      allow update: if isAdmin() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().ownerEmail == existing().ownerEmail &&
+        incoming().created_at == existing().created_at &&
+        incoming().updated_at == request.time &&
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly(['stock_count', 'updated_at']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'product_name',
+            'brand',
+            'model',
+            'color',
+            'category',
+            'connectivity',
+            'capacity_spec',
+            'display_buying_price',
+            'min_selling_price',
+            'stock_count',
+            'image_url',
+            'description',
+            'updated_at'
+          ])
+        );
+
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    // Secret Wholesale Costs (Admin-only, Master Gate linked to /products/{productId})
+    match /product_costs/{productId} {
+      allow get: if isAdmin() && isValidId(productId);
+      allow list: if isBootstrappedOwner() || (isVerified() && resource.data.ownerEmail == request.auth.token.email);
+
+      allow create: if isAdmin() &&
+        isValidId(productId) &&
+        isValidProductCost(incoming(), productId) &&
+        incoming().ownerEmail == request.auth.token.email &&
+        incoming().updated_at == request.time &&
+        (
+          exists(/databases/$(database)/documents/products/$(productId)) ||
+          existsAfter(/databases/$(database)/documents/products/$(productId))
+        );
+
+      allow update: if isAdmin() &&
+        isValidId(productId) &&
+        isValidProductCost(incoming(), productId) &&
+        incoming().product_id == existing().product_id &&
+        incoming().ownerEmail == existing().ownerEmail &&
+        incoming().updated_at == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['real_buying_price', 'updated_at']);
+
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    // Sales Memos / Invoices with Customer PII (Admin-only)
+    match /sales_memos/{memoId} {
+      allow get: if isAdmin() && isValidId(memoId);
+      allow list: if isBootstrappedOwner() || (isVerified() && resource.data.ownerEmail == request.auth.token.email);
+
+      allow create: if isAdmin() &&
+        isValidId(memoId) &&
+        isValidSalesMemo(incoming(), memoId) &&
+        incoming().ownerEmail == request.auth.token.email &&
+        incoming().created_at == request.time;
+
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(memoId);
+    }
+
+    // Admin Allowlist (Bootstrapped owner only)
+    match /admins/{uid} {
+      allow get: if isBootstrappedOwner() && isValidId(uid);
+      allow list: if isBootstrappedOwner();
+      allow create: if isBootstrappedOwner() &&
+        isValidId(uid) &&
+        isValidAdminDoc(incoming(), uid) &&
+        incoming().created_at == request.time;
+      allow update: if false;
+      allow delete: if isBootstrappedOwner() && isValidId(uid);
+    }
+  }
+}

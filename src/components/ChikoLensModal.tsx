@@ -20,6 +20,7 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     setError('');
     setResult(null);
@@ -28,13 +29,30 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
       const { dataUrl, base64, mimeType } = await compressImageFile(file);
       setPreviewUrl(dataUrl);
 
+      let attachedDataImages = 0;
+      const compactWatches = watches.map((w) => {
+        const img = w.image_url || '';
+        const isDataImg = img.startsWith('data:image/');
+        let keepImage = '';
+        if (img.startsWith('http')) {
+          keepImage = img;
+        } else if (isDataImg && attachedDataImages < 6) {
+          keepImage = img;
+          attachedDataImages += 1;
+        }
+        return {
+          ...w,
+          image_url: keepImage,
+        };
+      });
+
       const res = await fetch('/api/gemini/visual-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageBase64: base64,
           mimeType,
-          watches,
+          watches: compactWatches,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -220,7 +238,7 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
                           <div className="flex-1 min-w-0 space-y-1">
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-sm font-semibold text-[#F8F9FA] truncate">
-                                {product.brand} {product.model}
+                                {product.product_name || `${product.brand} ${product.model}`}
                               </p>
                               <span className="font-mono-num text-xs font-semibold text-[#D4AF37] shrink-0">
                                 {match.matchPercentage}% Match

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   MessageSquare,
@@ -18,11 +18,15 @@ import { ShopChatbot } from './components/ShopChatbot';
 import { WatchCard } from './components/WatchCard';
 import { WatchDetailModal } from './components/WatchDetailModal';
 import {
+  ADMIN_SESSION_KEY,
   createWatchRecord,
   deleteWatchRecord,
+  fetchAdminMemos,
   fetchWatches,
   loadLocalMemos,
+  loadLocalWatches,
   saveMemoRecord,
+  syncLocalWatchesToCloud,
   updateWatchRecord,
 } from './services/watchStore';
 import {
@@ -33,8 +37,6 @@ import {
   WatchFormInput,
   WatchItem,
 } from './types/watch';
-
-const ADMIN_SESSION_KEY = 'new_chiko_admin_session_v1';
 
 type PriceRangeFilter = 'all' | 'under2000' | '2000to15000' | 'above15000';
 type StockFilter = 'all' | 'inStock' | 'outOfStock';
@@ -51,15 +53,66 @@ const STORE_CATEGORIES: ProductCategory[] = [
   'Gadgets & Accessories',
 ];
 
+class StoreErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error.message || 'Unexpected application error' };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#0A0A0C] text-[#F8F9FA] flex items-center justify-center p-6">
+          <div className="max-w-md w-full rounded-3xl bg-[#121216] border border-[#D4AF37]/30 p-6 text-center space-y-4">
+            <h1 className="font-display text-2xl font-semibold text-[#D4AF37]">
+              New Chiko Watch &amp; Electronics
+            </h1>
+            <p className="text-sm text-[#D1D5DB]">
+              We hit a temporary data sync issue. Please reload the page to continue.
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="min-h-[44px] px-5 rounded-xl bg-[#D4AF37] text-[#0A0A0C] text-sm font-semibold cursor-pointer"
+            >
+              Reload Store
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
+  return (
+    <StoreErrorBoundary>
+      <StoreApp />
+    </StoreErrorBoundary>
+  );
+}
+
+function StoreApp() {
   const [watches, setWatches] = useState<WatchItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<AppTab>('catalog');
   const [selectedWatch, setSelectedWatch] = useState<WatchItem | null>(null);
 
-  // Admin state
+  // Admin & Storage state
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminUsername, setAdminUsername] = useState('admin');
+  const [adminToken, setAdminToken] = useState('');
+  const [storageSource, setStorageSource] = useState<'supabase' | 'server' | 'local'>('server');
+  const [cloudNotice, setCloudNotice] = useState('');
+  const [cloudError, setCloudError] = useState('');
   const [loginOpen, setLoginOpen] = useState(false);
   const [watchToEdit, setWatchToEdit] = useState<WatchItem | null>(null);
   const logoTapsRef = useRef<number[]>([]);
@@ -80,32 +133,88 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
-    async function init() {
-      const [{ watches: loaded }] = await Promise.all([fetchWatches()]);
-      if (!mounted) return;
-      setWatches(loaded);
+    let active = true;
+
+    async function initStore() {
       setSavedMemos(loadLocalMemos());
 
+      let validToken = '';
+      let validUsername = 'admin';
       try {
         const savedAdmin = sessionStorage.getItem(ADMIN_SESSION_KEY);
         if (savedAdmin) {
           const parsed = JSON.parse(savedAdmin);
-          if (parsed?.loggedIn) {
-            setIsAdmin(true);
-            setAdminUsername(parsed.username || 'admin');
+          if (parsed?.loggedIn && typeof parsed?.token === 'string' && parsed.token) {
+            const verifyRes = await fetch('/api/admin/verify', {
+              headers: { Authorization: `Bearer ${parsed.token}` },
+            });
+            if (verifyRes.ok) {
+              validToken = parsed.token;
+              validUsername = parsed.username || 'admin';
+            } else {
+              sessionStorage.removeItem(ADMIN_SESSION_KEY);
+            }
+          } else if (parsed?.loggedIn) {
+            sessionStorage.removeItem(ADMIN_SESSION_KEY);
           }
         }
       } catch {
         // ignore session parse errors
       }
+
+      if (!active) return;
+      if (validToken) {
+        setIsAdmin(true);
+        setAdminUsername(validUsername);
+        setAdminToken(validToken);
+      }
+
+      const result = await fetchWatches(validToken || undefined);
+      if (!active) return;
+
+      if (result.error) {
+        setCloudError(result.error);
+      }
+
+      if (validToken) {
+        const localItems = loadLocalWatches();
+        if (!result.error && localItems.length > 0 && result.watches.length === 0) {
+          const uploaded = await syncLocalWatchesToCloud(localItems, validToken);
+          if (uploaded > 0 && active) {
+            const refreshed = await fetchWatches(validToken);
+            if (!active) return;
+            setWatches(refreshed.watches);
+            setStorageSource(refreshed.source);
+            if (refreshed.error) setCloudError(refreshed.error);
+            setCloudNotice(
+              `Synced ${uploaded} local product(s) to the live store so everyone can see them.`
+            );
+          } else {
+            setWatches(result.watches);
+            setStorageSource(result.source);
+          }
+        } else {
+          setWatches(result.watches);
+          setStorageSource(result.source);
+        }
+        const memos = await fetchAdminMemos(validToken);
+        if (active) setSavedMemos(memos);
+      } else {
+        setWatches(result.watches);
+        setStorageSource(result.source);
+      }
+
       setLoading(false);
     }
-    init();
+
+    void initStore();
+
     return () => {
-      mounted = false;
+      active = false;
     };
   }, []);
+
+  const hydratedWatches = watches;
 
   // 5-Tap Rapid Gesture on header logo triggers Admin Login modal
   const handleLogoTap = () => {
@@ -126,39 +235,76 @@ export default function App() {
     }
   };
 
-  const handleAdminSuccess = (username: string) => {
+  const handleAdminSuccess = async (username: string, token: string) => {
     setIsAdmin(true);
     setAdminUsername(username);
+    setAdminToken(token);
     setLoginOpen(false);
     setActiveTab('admin');
+    setCloudError('');
     try {
       sessionStorage.setItem(
         ADMIN_SESSION_KEY,
-        JSON.stringify({ loggedIn: true, username })
+        JSON.stringify({ loggedIn: true, username, token })
       );
     } catch {
       // ignore
+    }
+
+    // Hydrate real wholesale costs, sync any pre-existing local items publicly, and load memos
+    try {
+      const localItems = loadLocalWatches();
+      let uploadedCount = 0;
+      if (localItems.length > 0) {
+        uploadedCount = await syncLocalWatchesToCloud(localItems, token);
+      }
+      const [refreshed, memos] = await Promise.all([
+        fetchWatches(token),
+        fetchAdminMemos(token),
+      ]);
+      setWatches(refreshed.watches);
+      setStorageSource(refreshed.source);
+      if (refreshed.error) {
+        setCloudError(refreshed.error);
+      }
+      setSavedMemos(memos);
+      if (uploadedCount > 0) {
+        setCloudNotice(
+          `Published ${uploadedCount} existing local product(s) so everyone can see them.`
+        );
+      }
+    } catch (err) {
+      console.warn('Admin hydration note:', err);
     }
   };
 
   const handleAdminLogout = () => {
     setIsAdmin(false);
+    setAdminToken('');
+    setCloudNotice('');
+    setCloudError('');
     setActiveTab('catalog');
     try {
       sessionStorage.removeItem(ADMIN_SESSION_KEY);
     } catch {
       // ignore
     }
+    void fetchWatches().then((res) => {
+      setWatches(res.watches);
+      setStorageSource(res.source);
+    });
   };
 
   const brands = useMemo(() => {
-    const unique = Array.from(new Set(watches.map((w) => w.brand.trim()).filter(Boolean)));
+    const unique = Array.from(
+      new Set(hydratedWatches.map((w) => w.brand.trim()).filter(Boolean))
+    );
     return ['All', ...unique.sort()];
-  }, [watches]);
+  }, [hydratedWatches]);
 
   const filteredWatches = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return watches.filter((w) => {
+    return hydratedWatches.filter((w) => {
       if (q) {
         const hay =
           `${w.product_name ?? ''} ${w.brand} ${w.model} ${w.color} ${w.category} ${w.connectivity} ${w.capacity_spec} ${w.description}`.toLowerCase();
@@ -190,7 +336,7 @@ export default function App() {
       }
       return true;
     });
-  }, [watches, searchQuery, brandFilter, categoryFilter, priceFilter, stockFilter]);
+  }, [hydratedWatches, searchQuery, brandFilter, categoryFilter, priceFilter, stockFilter]);
 
   const hasActiveFilters =
     searchQuery.trim() !== '' ||
@@ -208,13 +354,36 @@ export default function App() {
   };
 
   const handleCreateWatch = async (input: WatchFormInput) => {
-    const updated = await createWatchRecord(input, watches);
+    const { watches: updated, syncedToCloud, source } = await createWatchRecord(
+      input,
+      hydratedWatches,
+      adminToken
+    );
     setWatches(updated);
+    setStorageSource(source);
+    if (syncedToCloud) {
+      setCloudError('');
+      setCloudNotice('Product saved and published live — visible to everyone on any device.');
+    } else {
+      setCloudNotice('');
+      setCloudError(
+        'Could not reach Supabase or server storage — saved locally on this browser only.'
+      );
+    }
   };
 
   const handleUpdateWatch = async (id: string, patch: Partial<WatchFormInput>) => {
-    const updated = await updateWatchRecord(id, patch, watches);
+    const { watches: updated, syncedToCloud, source } = await updateWatchRecord(
+      id,
+      patch,
+      hydratedWatches,
+      adminToken
+    );
     setWatches(updated);
+    setStorageSource(source);
+    if (syncedToCloud) {
+      setCloudError('');
+    }
     if (selectedWatch?.id === id) {
       const refreshed = updated.find((w) => w.id === id) || null;
       setSelectedWatch(refreshed);
@@ -222,7 +391,11 @@ export default function App() {
   };
 
   const handleDeleteWatch = async (id: string) => {
-    const updated = await deleteWatchRecord(id, watches);
+    const { watches: updated } = await deleteWatchRecord(
+      id,
+      hydratedWatches,
+      adminToken
+    );
     setWatches(updated);
     if (selectedWatch?.id === id) {
       setSelectedWatch(null);
@@ -230,7 +403,7 @@ export default function App() {
   };
 
   const handleAdjustStock = async (id: string, delta: number) => {
-    const target = watches.find((w) => w.id === id);
+    const target = hydratedWatches.find((w) => w.id === id);
     if (!target) return;
     const nextCount = Math.max(0, target.stock_count + delta);
     await handleUpdateWatch(id, { stock_count: nextCount });
@@ -283,7 +456,7 @@ export default function App() {
           <button
             type="button"
             onClick={handleLogoTap}
-            className="font-display text-xl sm:text-2xl font-semibold tracking-tight text-[#F8F9FA] hover:text-[#D4AF37] transition-colors whitespace-nowrap shrink-0 select-none cursor-pointer"
+            className="font-display text-xl sm:text-2xl font-semibold tracking-tight text-[#F8F9FA] hover:text-[#D4AF37] transition-colors whitespace-nowrap shrink-0 select-none touch-manipulation cursor-pointer"
           >
             New Chiko Watch
           </button>
@@ -424,7 +597,7 @@ export default function App() {
                     Watches &amp; Electronics Collection
                   </h2>
                   <p className="text-xs text-[#9CA3AF] mt-0.5 font-mono-num">
-                    Showing {filteredWatches.length} of {watches.length} products
+                    Showing {filteredWatches.length} of {hydratedWatches.length} products
                   </p>
                 </div>
 
@@ -544,7 +717,7 @@ export default function App() {
                     />
                   ))}
                 </div>
-              ) : watches.length === 0 ? (
+              ) : hydratedWatches.length === 0 ? (
                 <div className="rounded-3xl bg-[#121216]/80 border border-white/[0.08] py-16 px-6 text-center space-y-4">
                   <div className="w-14 h-14 mx-auto rounded-full bg-[#D4AF37]/10 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37]">
                     <Watch size={28} strokeWidth={1.5} />
@@ -602,12 +775,12 @@ export default function App() {
         )}
 
         {activeTab === 'lens' && (
-          <ChikoLensView watches={watches} onSelectWatch={setSelectedWatch} />
+          <ChikoLensView watches={hydratedWatches} onSelectWatch={setSelectedWatch} />
         )}
 
         {activeTab === 'memo' && (
           <DigitalMemoBuilder
-            watches={watches}
+            watches={hydratedWatches}
             initialItems={draftMemoItems}
             savedMemos={savedMemos}
             onSaveMemo={handleSaveMemo}
@@ -617,8 +790,11 @@ export default function App() {
 
         {activeTab === 'admin' && isAdmin && (
           <AdminDashboard
-            watches={watches}
+            watches={hydratedWatches}
             adminUsername={adminUsername}
+            storageSource={storageSource}
+            cloudNotice={cloudNotice}
+            cloudError={cloudError}
             initialEditWatch={watchToEdit}
             onClearInitialEdit={() => setWatchToEdit(null)}
             onLogout={handleAdminLogout}
@@ -739,7 +915,7 @@ export default function App() {
       )}
 
       <ShopChatbot
-        watches={watches}
+        watches={hydratedWatches}
         isOpen={chatOpen}
         onToggle={setChatOpen}
         onSelectWatch={(w) => {

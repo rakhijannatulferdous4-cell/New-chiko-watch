@@ -59,13 +59,14 @@ export function ShopChatbot({
     setSending(true);
 
     try {
+      const lightCatalog = watches.map(({ image_url: _img, ...rest }) => rest);
       const res = await fetch('/api/gemini/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: query,
           history: nextHistory.map((m) => ({ role: m.role, text: m.text })),
-          watches,
+          watches: lightCatalog,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -192,7 +193,7 @@ export function ShopChatbot({
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold text-[#F8F9FA] truncate">
-                              {w.brand} {w.model}
+                              {w.product_name || `${w.brand} ${w.model}`}
                             </p>
                             <p className="text-[11px] text-[#9CA3AF] truncate">
                               {w.category} · {w.color}

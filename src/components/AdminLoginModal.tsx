@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 
 interface AdminLoginModalProps {
   onClose: () => void;
-  onSuccess: (username: string) => void;
+  onSuccess: (username: string, token: string) => void;
 }
 
 export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
@@ -29,7 +29,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
         setLoading(false);
         return;
       }
-      onSuccess(data.username || username);
+      onSuccess(data.username || username, data.token || '');
     } catch {
       setError('Unable to reach authentication server.');
     } finally {
@@ -51,9 +51,9 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
         exit={{ opacity: 0, scale: 0.96, y: 12 }}
         transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-3xl bg-[#121216] border border-[#D4AF37]/30 p-6 shadow-2xl"
+        className="w-full max-w-md rounded-3xl bg-[#121216] border border-[#D4AF37]/30 p-6 shadow-2xl space-y-5"
       >
-        <div className="flex items-start justify-between gap-4 mb-5">
+        <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-[#D4AF37]/15 border border-[#D4AF37]/35 flex items-center justify-center text-[#D4AF37]">
               <ShieldCheck size={22} />
@@ -89,7 +89,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
               onChange={(e) => setUsername(e.target.value)}
               placeholder="admin"
               required
-              autoFocus
+              autoComplete="username"
               className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
             />
           </div>
@@ -105,6 +105,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
               required
+              autoComplete="current-password"
               className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
             />
           </div>
@@ -121,7 +122,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
             className="w-full min-h-[48px] rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm flex items-center justify-center gap-2 hover:bg-[#E5C158] disabled:opacity-50 transition-colors cursor-pointer"
           >
             <Lock size={16} />
-            <span>{loading ? 'Verifying...' : 'Sign In to Admin Mode'}</span>
+            <span>{loading ? 'Verifying...' : 'Sign In as Shopkeeper'}</span>
           </button>
         </form>
       </motion.div>

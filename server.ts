@@ -1,14 +1,231 @@
 import 'dotenv/config';
-import express, { Request, Response } from 'express';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import express, { type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, Part, Type } from '@google/genai';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { GoogleGenAI, Type, type Part } from '@google/genai';
 import { getServerConfig } from './src/config/keys.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const STORE_DIR = path.resolve(__dirname, '.data');
+const STORE_FILE = path.join(STORE_DIR, 'store.json');
+
+interface StoredWatch {
+  id: string;
+  product_name?: string;
+  brand: string;
+  model: string;
+  color: string;
+  category: string;
+  connectivity: string;
+  capacity_spec: string;
+  display_buying_price: number;
+  real_buying_price: number;
+  min_selling_price: number;
+  stock_count: number;
+  image_url: string;
+  description: string;
+  created_at: string;
+}
+
+interface StoredMemo {
+  id: string;
+  invoice_number: string;
+  customer_name: string;
+  customer_phone: string;
+  payment_method: string;
+  discount_amount: number;
+  total_amount: number;
+  notes: string;
+  items: unknown[];
+  created_at: string;
+}
+
+interface ServerStoreData {
+  watches: StoredWatch[];
+  memos: StoredMemo[];
+}
+
+let storeCache: ServerStoreData | null = null;
+
+function readServerStore(): ServerStoreData {
+  if (storeCache) return storeCache;
+  try {
+    if (fs.existsSync(STORE_FILE)) {
+      const raw = fs.readFileSync(STORE_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      storeCache = {
+        watches: Array.isArray(parsed?.watches) ? parsed.watches : [],
+        memos: Array.isArray(parsed?.memos) ? parsed.memos : [],
+      };
+      return storeCache;
+    }
+  } catch (err) {
+    console.warn('Unable to read .data/store.json, starting empty:', err);
+  }
+  storeCache = { watches: [], memos: [] };
+  return storeCache;
+}
+
+function writeServerStore(next: ServerStoreData): void {
+  storeCache = next;
+  try {
+    fs.mkdirSync(STORE_DIR, { recursive: true });
+    fs.writeFileSync(STORE_FILE, JSON.stringify(next, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('Unable to persist .data/store.json:', err);
+  }
+}
+
+function getTokenSecret(): string {
+  const { ADMIN_USERNAME, ADMIN_PASSWORD, GEMINI_API_KEY } = getServerConfig();
+  return crypto
+    .createHash('sha256')
+    .update(`new-chiko-watch:${ADMIN_USERNAME}:${ADMIN_PASSWORD}:${GEMINI_API_KEY}`)
+    .digest('hex');
+}
+
+function createAdminToken(username: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      username,
+      exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    })
+  ).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getTokenSecret())
+    .update(payload)
+    .digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyAdminToken(req: Request): { username: string } | null {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7).trim();
+  const dotIdx = token.indexOf('.');
+  if (dotIdx <= 0) return null;
+
+  const payload = token.slice(0, dotIdx);
+  const sig = token.slice(dotIdx + 1);
+  const expectedSig = crypto
+    .createHmac('sha256', getTokenSecret())
+    .update(payload)
+    .digest('base64url');
+
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return null;
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!decoded?.username || typeof decoded.exp !== 'number' || decoded.exp < Date.now()) {
+      return null;
+    }
+    return { username: String(decoded.username) };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeStoredWatch(raw: Record<string, unknown>, existing?: StoredWatch): StoredWatch {
+  const id =
+    typeof raw.id === 'string' && raw.id.trim()
+      ? raw.id.trim().slice(0, 128)
+      : existing?.id || `nc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const toNum = (val: unknown, fallback = 0) => {
+    const n = Number(val);
+    return Number.isFinite(n) && n >= 0 ? Math.min(100000000, Math.round(n * 100) / 100) : fallback;
+  };
+  const toStock = (val: unknown, fallback = 0) => {
+    const n = Number(val);
+    return Number.isFinite(n) && n >= 0 ? Math.min(1000000, Math.round(n)) : fallback;
+  };
+
+  return {
+    id,
+    product_name:
+      typeof raw.product_name === 'string'
+        ? raw.product_name.trim().slice(0, 160)
+        : existing?.product_name || '',
+    brand: String(raw.brand ?? existing?.brand ?? 'New Chiko').trim().slice(0, 80) || 'New Chiko',
+    model: String(raw.model ?? existing?.model ?? 'Model').trim().slice(0, 120) || 'Model',
+    color: String(raw.color ?? existing?.color ?? 'Black').trim().slice(0, 80) || 'Black',
+    category:
+      String(raw.category ?? existing?.category ?? 'Gadgets & Accessories').trim().slice(0, 80) ||
+      'Gadgets & Accessories',
+    connectivity:
+      String(raw.connectivity ?? existing?.connectivity ?? 'Standard').trim().slice(0, 100) ||
+      'Standard',
+    capacity_spec:
+      String(raw.capacity_spec ?? existing?.capacity_spec ?? 'Standard').trim().slice(0, 100) ||
+      'Standard',
+    display_buying_price: toNum(raw.display_buying_price, existing?.display_buying_price ?? 0),
+    real_buying_price: toNum(raw.real_buying_price, existing?.real_buying_price ?? 0),
+    min_selling_price: toNum(raw.min_selling_price, existing?.min_selling_price ?? 0),
+    stock_count: toStock(raw.stock_count, existing?.stock_count ?? 1),
+    image_url:
+      typeof raw.image_url === 'string'
+        ? raw.image_url.slice(0, 800000)
+        : existing?.image_url || '',
+    description:
+      typeof raw.description === 'string'
+        ? raw.description.trim().slice(0, 1200)
+        : existing?.description || '',
+    created_at:
+      typeof raw.created_at === 'string' && raw.created_at.trim()
+        ? raw.created_at
+        : existing?.created_at || new Date().toISOString(),
+  };
+}
+
+function toPublicWatch(w: StoredWatch, includeCost: boolean): StoredWatch {
+  return includeCost ? w : { ...w, real_buying_price: 0 };
+}
+
+let serverSupabaseClient: SupabaseClient | null = null;
+let cachedSupabaseSignature = '';
+
+function getServerSupabase(): SupabaseClient | null {
+  const { SUPABASE_URL, SUPABASE_KEY } = getServerConfig();
+  if (!SUPABASE_URL || !SUPABASE_KEY || !SUPABASE_URL.startsWith('http')) {
+    return null;
+  }
+  const sig = `${SUPABASE_URL}::${SUPABASE_KEY}`;
+  if (!serverSupabaseClient || cachedSupabaseSignature !== sig) {
+    serverSupabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: false },
+    });
+    cachedSupabaseSignature = sig;
+  }
+  return serverSupabaseClient;
+}
+
+function buildSupabaseWatchInsert(w: StoredWatch) {
+  return {
+    product_name: w.product_name || '',
+    brand: w.brand,
+    model: w.model,
+    color: w.color,
+    category: w.category,
+    connectivity: w.connectivity,
+    capacity_spec: w.capacity_spec,
+    display_buying_price: w.display_buying_price,
+    real_buying_price: w.real_buying_price,
+    min_selling_price: w.min_selling_price,
+    stock_count: w.stock_count,
+    image_url: w.image_url || '',
+    description: w.description || '',
+  };
+}
 
 function createGeminiClient(): GoogleGenAI {
   const { GEMINI_API_KEY } = getServerConfig();
@@ -148,7 +365,15 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '20mb' }));
 
-  // Admin Login Verification
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({
+      ok: true,
+      service: 'new-chiko-watch',
+      supabaseConfigured: Boolean(getServerSupabase()),
+    });
+  });
+
+  // Admin Login Verification (Standard Username & Password -> signed session token)
   app.post('/api/admin/login', (req: Request, res: Response) => {
     const { username, password } = req.body ?? {};
     const { ADMIN_USERNAME, ADMIN_PASSWORD } = getServerConfig();
@@ -159,13 +384,326 @@ async function startServer() {
       username.trim() === ADMIN_USERNAME &&
       password === ADMIN_PASSWORD
     ) {
-      return res.json({ ok: true, username: ADMIN_USERNAME });
+      const token = createAdminToken(ADMIN_USERNAME);
+      return res.json({ ok: true, username: ADMIN_USERNAME, token });
     }
 
     return res.status(401).json({
       ok: false,
       error: 'Invalid admin username or password.',
     });
+  });
+
+  app.get('/api/admin/verify', (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false });
+    }
+    return res.json({ ok: true, username: admin.username });
+  });
+
+  // Shared Public Products Store (Supabase primary, server store fallback)
+  app.get('/api/products', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    const supabase = getServerSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('watches')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('Supabase GET /api/products error:', error.message);
+        return res.status(502).json({
+          ok: false,
+          source: 'supabase',
+          error: `Supabase query failed: ${error.message}`,
+        });
+      }
+      const rows = (Array.isArray(data) ? data : []).map((r) =>
+        toPublicWatch(sanitizeStoredWatch(r as Record<string, unknown>), Boolean(admin))
+      );
+      return res.json({ ok: true, source: 'supabase', watches: rows });
+    }
+
+    const store = readServerStore();
+    return res.json({
+      ok: true,
+      source: 'server',
+      watches: store.watches.map((w) => toPublicWatch(w, Boolean(admin))),
+    });
+  });
+
+  app.post('/api/products', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Admin login required to add products.' });
+    }
+    const input = (req.body ?? {}) as Record<string, unknown>;
+    const watch = sanitizeStoredWatch(input);
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      const payload = buildSupabaseWatchInsert(watch);
+      let { data, error } = await supabase
+        .from('watches')
+        .insert([payload])
+        .select()
+        .single();
+      if (error && error.message.includes('product_name')) {
+        const { product_name: _ignored, ...legacyPayload } = payload;
+        const retry = await supabase
+          .from('watches')
+          .insert([legacyPayload])
+          .select()
+          .single();
+        data = retry.data;
+        error = retry.error;
+      }
+      if (error || !data) {
+        return res.status(502).json({
+          ok: false,
+          error: `Failed to save product to Supabase: ${error?.message || 'Unknown error'}. Make sure you ran schema.sql in Supabase.`,
+        });
+      }
+      const saved = sanitizeStoredWatch(data as Record<string, unknown>);
+      return res.status(201).json({ ok: true, source: 'supabase', watch: saved });
+    }
+
+    const store = readServerStore();
+    const nextWatches = [watch, ...store.watches.filter((w) => w.id !== watch.id)];
+    writeServerStore({ ...store, watches: nextWatches });
+    return res.status(201).json({ ok: true, source: 'server', watch, watches: nextWatches });
+  });
+
+  app.post('/api/products/sync', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Admin login required to sync products.' });
+    }
+    const incoming = Array.isArray(req.body?.watches) ? req.body.watches : [];
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      const { data: existingRows, error: fetchErr } = await supabase
+        .from('watches')
+        .select('brand,model,created_at');
+      if (fetchErr) {
+        return res.status(502).json({
+          ok: false,
+          error: `Supabase sync read failed: ${fetchErr.message}`,
+        });
+      }
+      const existingKeys = new Set(
+        Array.isArray(existingRows)
+          ? existingRows.map((r) => `${r.brand}::${r.model}::${r.created_at}`)
+          : []
+      );
+      const toInsert = [];
+      for (const raw of incoming) {
+        if (!raw || typeof raw !== 'object') continue;
+        const sanitized = sanitizeStoredWatch(raw as Record<string, unknown>);
+        const key = `${sanitized.brand}::${sanitized.model}::${sanitized.created_at}`;
+        if (!existingKeys.has(key)) {
+          existingKeys.add(key);
+          toInsert.push(buildSupabaseWatchInsert(sanitized));
+        }
+      }
+      if (toInsert.length > 0) {
+        const { error: insertErr } = await supabase.from('watches').insert(toInsert);
+        if (insertErr) {
+          return res.status(502).json({
+            ok: false,
+            error: `Supabase sync insert failed: ${insertErr.message}`,
+          });
+        }
+      }
+      return res.json({ ok: true, source: 'supabase', added: toInsert.length });
+    }
+
+    const store = readServerStore();
+    const existingIds = new Set(store.watches.map((w) => w.id));
+    let added = 0;
+    const toAdd: StoredWatch[] = [];
+    for (const raw of incoming) {
+      if (!raw || typeof raw !== 'object') continue;
+      const sanitized = sanitizeStoredWatch(raw as Record<string, unknown>);
+      if (!existingIds.has(sanitized.id)) {
+        existingIds.add(sanitized.id);
+        toAdd.push(sanitized);
+        added += 1;
+      }
+    }
+    const nextWatches = [...toAdd, ...store.watches];
+    if (added > 0) {
+      writeServerStore({ ...store, watches: nextWatches });
+    }
+    return res.json({ ok: true, source: 'server', added, watches: nextWatches });
+  });
+
+  app.put('/api/products/:id', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Admin login required to update products.' });
+    }
+    const id = req.params.id;
+    const patch = (req.body ?? {}) as Record<string, unknown>;
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      const allowedPatch: Record<string, unknown> = {};
+      const fields = [
+        'product_name',
+        'brand',
+        'model',
+        'color',
+        'category',
+        'connectivity',
+        'capacity_spec',
+        'display_buying_price',
+        'real_buying_price',
+        'min_selling_price',
+        'stock_count',
+        'image_url',
+        'description',
+      ];
+      for (const f of fields) {
+        if (f in patch) allowedPatch[f] = patch[f];
+      }
+      let { data, error } = await supabase
+        .from('watches')
+        .update(allowedPatch)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error && 'product_name' in allowedPatch && error.message.includes('product_name')) {
+        const { product_name: _ignored, ...legacyPatch } = allowedPatch;
+        const retry = await supabase
+          .from('watches')
+          .update(legacyPatch)
+          .eq('id', id)
+          .select()
+          .single();
+        data = retry.data;
+        error = retry.error;
+      }
+      if (error) {
+        return res.status(502).json({
+          ok: false,
+          error: `Failed to update product in Supabase: ${error.message}`,
+        });
+      }
+      const saved = data ? sanitizeStoredWatch(data as Record<string, unknown>) : null;
+      return res.json({ ok: true, source: 'supabase', watch: saved });
+    }
+
+    const store = readServerStore();
+    const existing = store.watches.find((w) => w.id === id);
+    if (!existing) {
+      const created = sanitizeStoredWatch({ ...patch, id });
+      const nextWatches = [created, ...store.watches];
+      writeServerStore({ ...store, watches: nextWatches });
+      return res.json({ ok: true, source: 'server', watch: created, watches: nextWatches });
+    }
+    const updated = sanitizeStoredWatch({ ...existing, ...patch, id }, existing);
+    const nextWatches = store.watches.map((w) => (w.id === id ? updated : w));
+    writeServerStore({ ...store, watches: nextWatches });
+    return res.json({ ok: true, source: 'server', watch: updated, watches: nextWatches });
+  });
+
+  app.delete('/api/products/:id', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Admin login required to delete products.' });
+    }
+    const id = req.params.id;
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      const { error } = await supabase.from('watches').delete().eq('id', id);
+      if (error) {
+        return res.status(502).json({
+          ok: false,
+          error: `Failed to delete product from Supabase: ${error.message}`,
+        });
+      }
+      return res.json({ ok: true, source: 'supabase' });
+    }
+
+    const store = readServerStore();
+    const nextWatches = store.watches.filter((w) => w.id !== id);
+    writeServerStore({ ...store, watches: nextWatches });
+    return res.json({ ok: true, source: 'server', watches: nextWatches });
+  });
+
+  // Sales Memos Endpoints (Supabase primary, server store fallback)
+  app.get('/api/memos', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.json({ ok: true, memos: [] });
+    }
+    const supabase = getServerSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('sales_memos')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (!error && Array.isArray(data)) {
+        return res.json({ ok: true, source: 'supabase', memos: data });
+      }
+    }
+    const store = readServerStore();
+    return res.json({ ok: true, source: 'server', memos: store.memos });
+  });
+
+  app.post('/api/memos', async (req: Request, res: Response) => {
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    const memo: StoredMemo = {
+      id:
+        typeof raw.id === 'string' && raw.id.trim()
+          ? raw.id.trim().slice(0, 128)
+          : `memo-${Date.now()}`,
+      invoice_number: String(raw.invoice_number ?? `NCE-${Date.now()}`).slice(0, 64),
+      customer_name: String(raw.customer_name ?? 'Walk-in Customer').slice(0, 120),
+      customer_phone: String(raw.customer_phone ?? '').slice(0, 32),
+      payment_method: String(raw.payment_method ?? 'Cash').slice(0, 20),
+      discount_amount: Number(raw.discount_amount) || 0,
+      total_amount: Number(raw.total_amount) || 0,
+      notes: String(raw.notes ?? '').slice(0, 500),
+      items: Array.isArray(raw.items) ? raw.items.slice(0, 50) : [],
+      created_at:
+        typeof raw.created_at === 'string' && raw.created_at.trim()
+          ? raw.created_at
+          : new Date().toISOString(),
+    };
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('sales_memos')
+        .insert([
+          {
+            invoice_number: memo.invoice_number,
+            customer_name: memo.customer_name,
+            customer_phone: memo.customer_phone,
+            payment_method: memo.payment_method,
+            discount_amount: memo.discount_amount,
+            total_amount: memo.total_amount,
+            notes: memo.notes,
+            items: memo.items,
+          },
+        ])
+        .select()
+        .single();
+      if (!error && data) {
+        return res.status(201).json({ ok: true, source: 'supabase', memo: data });
+      }
+    }
+
+    const store = readServerStore();
+    const nextMemos = [memo, ...store.memos.filter((m) => m.id !== memo.id)].slice(0, 100);
+    writeServerStore({ ...store, memos: nextMemos });
+    return res.status(201).json({ ok: true, source: 'server', memo, memos: nextMemos });
   });
 
   // Chiko Lens: Visual + Semantic Search against Full Inventory (v1beta)
@@ -506,7 +1044,11 @@ ${JSON.stringify(publicCatalog)}`,
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.K_SERVICE || process.env.K_REVISION);
+
+  if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },

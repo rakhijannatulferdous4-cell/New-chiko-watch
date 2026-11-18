@@ -25,6 +25,9 @@ import { WatchImage } from './WatchImage';
 interface AdminDashboardProps {
   watches: WatchItem[];
   adminUsername: string;
+  storageSource: 'supabase' | 'server' | 'local';
+  cloudNotice?: string;
+  cloudError?: string;
   initialEditWatch?: WatchItem | null;
   onClearInitialEdit?: () => void;
   onLogout: () => void;
@@ -108,6 +111,9 @@ function normalizeAiCategory(rawCategory: unknown): ProductCategory {
 export function AdminDashboard({
   watches,
   adminUsername,
+  storageSource,
+  cloudNotice,
+  cloudError,
   initialEditWatch,
   onClearInitialEdit,
   onLogout,
@@ -131,6 +137,7 @@ export function AdminDashboard({
   const [aiFilling, setAiFilling] = useState(false);
   const [aiSuccessMsg, setAiSuccessMsg] = useState('');
   const [aiError, setAiError] = useState('');
+  const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -166,6 +173,7 @@ export function AdminDashboard({
     setPhotoProviderLabel('');
     setAiSuccessMsg('');
     setAiError('');
+    setSaveError('');
     setFormOpen(true);
   };
 
@@ -219,6 +227,7 @@ export function AdminDashboard({
     setPhotoProviderLabel('');
     setAiSuccessMsg('');
     setAiError('');
+    setSaveError('');
     setFormOpen(true);
   };
 
@@ -332,6 +341,7 @@ export function AdminDashboard({
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setSaveError('');
     try {
       const trimmedName = (form.product_name || '').trim();
       const trimmedModel = form.model.trim();
@@ -352,6 +362,13 @@ export function AdminDashboard({
         await onCreateWatch(payload);
       }
       setFormOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to save product.';
+      setSaveError(
+        msg.startsWith('{')
+          ? 'Cloud database rejected this save. Please make sure you are signed in with your owner Google account and try again.'
+          : msg
+      );
     } finally {
       setSaving(false);
     }
@@ -369,8 +386,13 @@ export function AdminDashboard({
             Watch &amp; Electronics Inventory
           </h2>
           <p className="text-xs text-[#9CA3AF] mt-1">
-            Storage: {isSupabaseConfigured ? 'Supabase Cloud + Local Cache' : 'Local Browser Storage'} ·{' '}
-            Media: {isCloudinaryPresetConfigured ? 'Cloudinary Live' : 'Local Compressed Fallback'}
+            Storage:{' '}
+            {isSupabaseConfigured || storageSource === 'supabase'
+              ? 'Supabase Cloud Database (Permanent 24/7 Live Storage)'
+              : storageSource === 'server'
+              ? 'Temporary Server Storage (Add Supabase keys for permanent 24/7 persistence)'
+              : 'Local Browser Fallback'}{' '}
+            · Media: {isCloudinaryPresetConfigured ? 'Cloudinary Live' : 'Compressed Cloud Image'}
           </p>
         </div>
 
@@ -393,6 +415,31 @@ export function AdminDashboard({
           </button>
         </div>
       </div>
+
+      {!isSupabaseConfigured && storageSource !== 'supabase' && (
+        <div className="rounded-2xl bg-amber-500/10 border border-amber-400/35 px-4 py-3 text-xs text-amber-200 leading-relaxed space-y-1">
+          <p className="font-semibold text-amber-300">
+            Supabase environment keys are not detected on this server yet
+          </p>
+          <p className="text-[#D1D5DB]">
+            Add <code className="text-amber-200">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
+            <code className="text-amber-200">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in AI Studio Secrets (or Cloud Run / Vercel Environment Variables) and run{' '}
+            <code className="text-amber-200">schema.sql</code> in Supabase SQL Editor so products stay permanently saved 24/7 across restarts.
+          </p>
+        </div>
+      )}
+
+      {cloudError && (
+        <div className="rounded-2xl bg-rose-500/10 border border-rose-500/35 px-4 py-3 text-xs text-rose-200 leading-relaxed">
+          {cloudError}
+        </div>
+      )}
+
+      {cloudNotice && (
+        <div className="rounded-2xl bg-emerald-500/10 border border-emerald-400/30 px-4 py-3 text-xs text-emerald-300">
+          {cloudNotice}
+        </div>
+      )}
 
       {/* Analytics KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -495,7 +542,7 @@ export function AdminDashboard({
                       />
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-xs text-[#9CA3AF]">
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#9CA3AF]">
                         <span className="text-[#D4AF37] font-medium">{product.brand}</span>
                         <span aria-hidden="true">·</span>
                         <span>{product.category}</span>
@@ -889,6 +936,12 @@ export function AdminDashboard({
                   className="w-full rounded-xl bg-[#0A0A0C] border border-white/[0.12] p-3 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
                 />
               </div>
+
+              {saveError && (
+                <div className="rounded-xl bg-rose-500/10 border border-rose-500/35 px-3.5 py-2.5 text-xs text-rose-200">
+                  {saveError}
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button
