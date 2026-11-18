@@ -9,14 +9,14 @@
 @layer base {
   html {
     font-family: var(--font-sans);
-    background-color: #0A0A0C;
-    color: #F8F9FA;
+    background-color: #FAFAFA;
+    color: #09090B;
     scroll-behavior: smooth;
   }
 
   body {
-    background-color: #0A0A0C;
-    color: #F8F9FA;
+    background-color: #FAFAFA;
+    color: #09090B;
     overflow-x: hidden;
   }
 }
@@ -34,37 +34,46 @@
   padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
 }
 
-/* Custom subtle dark scrollbar */
+/* Hide horizontal scrollbar on compact category rails while preserving touch scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Clean minimalist light scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0A0A0C;
+  background: #F4F4F5;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(212, 175, 55, 0.25);
+  background: rgba(9, 9, 11, 0.18);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(212, 175, 55, 0.45);
+  background: rgba(9, 9, 11, 0.35);
 }
 
 @media print {
   body {
     background: #ffffff !important;
-    color: #0A0A0C !important;
+    color: #09090B !important;
   }
   .no-print {
     display: none !important;
   }
   .print-only-sheet {
     box-shadow: none !important;
-    border: 1px solid #d1d5db !important;
+    border: 1px solid #d4d4d8 !important;
     background: #ffffff !important;
-    color: #0A0A0C !important;
+    color: #09090B !important;
   }
 }

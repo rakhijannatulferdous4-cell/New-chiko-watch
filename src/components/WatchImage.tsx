@@ -25,21 +25,21 @@ function getCategoryIcon(category: string | undefined, size: number) {
     case 'Analog Watches':
     case 'Digital Watches':
     case 'Smartwatches':
-      return <Watch size={size} strokeWidth={1.35} className="text-[#D4AF37]" />;
+      return <Watch size={size} strokeWidth={1.35} className="text-zinc-900" />;
     case 'TWS Earbuds':
     case 'Neckbands':
-      return <Headphones size={size} strokeWidth={1.35} className="text-[#D4AF37]" />;
+      return <Headphones size={size} strokeWidth={1.35} className="text-zinc-900" />;
     case 'Power Banks':
-      return <BatteryCharging size={size} strokeWidth={1.35} className="text-[#D4AF37]" />;
+      return <BatteryCharging size={size} strokeWidth={1.35} className="text-zinc-900" />;
     case 'Chargers & Cables':
-      return <PlugZap size={size} strokeWidth={1.35} className="text-[#D4AF37]" />;
+      return <PlugZap size={size} strokeWidth={1.35} className="text-zinc-900" />;
     case 'Bluetooth Speakers':
-      return <Speaker size={size} strokeWidth={1.35} className="text-[#D4AF37]" />;
+      return <Speaker size={size} strokeWidth={1.35} className="text-zinc-900" />;
     case 'Gadgets & Accessories':
     case 'Accessories':
-      return <Cable size={size} strokeWidth={1.35} className="text-[#D4AF37]" />;
+      return <Cable size={size} strokeWidth={1.35} className="text-zinc-900" />;
     default:
-      return <Cpu size={size} strokeWidth={1.35} className="text-[#D4AF37]" />;
+      return <Cpu size={size} strokeWidth={1.35} className="text-zinc-900" />;
   }
 }
 
@@ -50,7 +50,7 @@ export function WatchImage({
   model,
   category,
   className = '',
-  iconSize = 44,
+  iconSize = 36,
 }: WatchImageProps) {
   const [failed, setFailed] = useState(false);
 
@@ -61,25 +61,18 @@ export function WatchImage({
   if (!src || failed) {
     return (
       <div
-        className={`relative flex flex-col items-center justify-center bg-gradient-to-br from-[#16161B] via-[#0F0F13] to-[#0A0A0C] text-[#D4AF37]/80 select-none overflow-hidden ${className}`}
+        className={`relative flex flex-col items-center justify-center w-full h-full bg-gradient-to-br from-[#F8F8FA] via-[#F4F4F5] to-[#EAEAEF] text-zinc-900 select-none overflow-hidden ${className}`}
         aria-label={alt}
       >
-        <div
-          className="absolute inset-0 opacity-25 pointer-events-none"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 50% 42%, rgba(212, 175, 55, 0.22), transparent 64%)',
-          }}
-        />
-        <div className="relative flex flex-col items-center gap-2.5 px-4 text-center">
-          <div className="w-16 h-16 rounded-full border border-[#D4AF37]/25 bg-[#0A0A0C]/70 flex items-center justify-center shadow-inner">
+        <div className="relative flex flex-col items-center gap-2 px-3 text-center">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border border-zinc-200 bg-white flex items-center justify-center shadow-xs">
             {getCategoryIcon(category, iconSize)}
           </div>
           <div className="space-y-0.5">
-            <p className="text-[11px] tracking-[0.18em] uppercase text-[#D4AF37]/80 font-medium">
+            <p className="text-[10px] tracking-[0.16em] uppercase text-zinc-700 font-semibold">
               {brand}
             </p>
-            <p className="text-xs text-[#F8F9FA]/60 line-clamp-1 max-w-[180px]">{model}</p>
+            <p className="text-[11px] text-zinc-500 line-clamp-1 max-w-[140px]">{model}</p>
           </div>
         </div>
       </div>

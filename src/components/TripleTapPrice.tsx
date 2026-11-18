@@ -123,46 +123,94 @@ export function TripleTapPrice({
   };
 
   const profit = minSellingPrice - realBuyingPrice;
+  const hasTagDiscount = displayBuyingPrice > minSellingPrice;
+  const discountPct =
+    hasTagDiscount && displayBuyingPrice > 0
+      ? Math.round(((displayBuyingPrice - minSellingPrice) / displayBuyingPrice) * 100)
+      : 0;
 
   return (
     <div className="relative">
-      <div className={compact ? 'space-y-0.5' : 'space-y-1'}>
-        {isAdmin ? (
-          <button
-            type="button"
-            onTouchStart={handleTouchStart}
-            onTouchEnd={handleTouchEnd}
-            onClick={handleClick}
-            className="text-left flex items-center w-full min-h-[44px] px-1.5 -mx-1.5 rounded-lg touch-manipulation select-none cursor-pointer active:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#D4AF37]/60 transition-colors"
-            title="Tag Price"
-          >
-            <span className="text-xs text-[#9CA3AF]">
-              Tag Price:{' '}
-              <span className="font-mono-num line-through decoration-[#9CA3AF]/60 text-[#A1A1AA]">
-                {formatBDT(displayBuyingPrice)}
-              </span>
-            </span>
-          </button>
-        ) : (
-          <div className="py-1 select-none">
-            <span className="text-xs text-[#9CA3AF]">
-              Tag Price:{' '}
-              <span className="font-mono-num line-through decoration-[#9CA3AF]/60 text-[#A1A1AA]">
-                {formatBDT(displayBuyingPrice)}
-              </span>
-            </span>
-          </div>
-        )}
-
-        <div className="flex items-baseline justify-between gap-2">
-          <span className={compact ? 'text-sm font-semibold text-[#F8F9FA]' : 'text-base font-semibold text-[#F8F9FA]'}>
-            Offer Price:{' '}
-            <span className="font-mono-num text-[#D4AF37]">
+      {compact ? (
+        <div className="space-y-0.5">
+          <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
+            <span className="font-mono-num text-[15px] sm:text-base font-bold text-[#09090B] tracking-tight">
               {formatBDT(minSellingPrice)}
             </span>
-          </span>
+            {hasTagDiscount && (
+              <span className="font-mono-num text-[11px] text-zinc-500 line-through">
+                {formatBDT(displayBuyingPrice)}
+              </span>
+            )}
+            {discountPct > 0 && (
+              <span className="font-mono-num text-[10px] font-semibold text-zinc-900">
+                -{discountPct}%
+              </span>
+            )}
+          </div>
+
+          {isAdmin && (
+            <button
+              type="button"
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+              onClick={handleClick}
+              className="text-left flex items-center w-full min-h-[32px] px-1 -mx-1 rounded touch-manipulation select-none cursor-pointer hover:bg-zinc-100 active:bg-zinc-200/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-900 transition-colors"
+              title="Tag Price (Triple-tap for real cost)"
+            >
+              <span className="text-[11px] text-zinc-500">
+                Tag:{' '}
+                <span className="font-mono-num line-through text-zinc-500">
+                  {formatBDT(displayBuyingPrice)}
+                </span>
+              </span>
+            </button>
+          )}
         </div>
-      </div>
+      ) : (
+        <div className="space-y-1">
+          {isAdmin ? (
+            <button
+              type="button"
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+              onClick={handleClick}
+              className="text-left flex items-center w-full min-h-[40px] px-2 -mx-2 rounded-lg touch-manipulation select-none cursor-pointer hover:bg-zinc-100 active:bg-zinc-200/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-900 transition-colors"
+              title="Tag Price (Triple-tap for real cost)"
+            >
+              <span className="text-xs text-zinc-500">
+                Tag Price:{' '}
+                <span className="font-mono-num line-through decoration-zinc-400 text-zinc-500">
+                  {formatBDT(displayBuyingPrice)}
+                </span>
+              </span>
+            </button>
+          ) : (
+            <div className="py-0.5 select-none">
+              <span className="text-xs text-zinc-500">
+                Tag Price:{' '}
+                <span className="font-mono-num line-through decoration-zinc-400 text-zinc-500">
+                  {formatBDT(displayBuyingPrice)}
+                </span>
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-base font-semibold text-zinc-900">
+              Offer Price:{' '}
+              <span className="font-mono-num text-xl font-bold text-[#09090B]">
+                {formatBDT(minSellingPrice)}
+              </span>
+            </span>
+            {discountPct > 0 && (
+              <span className="font-mono-num text-xs font-semibold text-zinc-900">
+                Save {discountPct}%
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {isAdmin && showRealCost && (
@@ -170,17 +218,17 @@ export function TripleTapPrice({
             initial={{ opacity: 0, y: 6, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 4, scale: 0.97 }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
             onTouchEnd={(e) => e.stopPropagation()}
-            className="mt-2 rounded-xl bg-[#0A0A0C]/95 backdrop-blur-md border border-[#D4AF37]/50 px-3 py-2 shadow-xl shadow-black/60 z-20"
+            className="mt-2 rounded-lg bg-[#09090B] text-white px-2.5 py-1.5 shadow-lg z-20"
             role="status"
             aria-live="polite"
           >
-            <div className="flex items-center gap-1.5 text-xs font-medium text-[#D4AF37] font-mono-num">
-              <Lock size={13} className="shrink-0" />
+            <div className="flex items-center gap-1.5 text-[11px] font-medium font-mono-num">
+              <Lock size={12} className="shrink-0 text-zinc-300" />
               <span>
-                Real Cost: {formatBDT(realBuyingPrice)} | Profit:{' '}
+                Cost: {formatBDT(realBuyingPrice)} · Profit:{' '}
                 <span className={profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
                   {formatBDT(profit)}
                 </span>

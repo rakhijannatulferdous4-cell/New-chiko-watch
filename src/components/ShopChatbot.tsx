@@ -115,25 +115,25 @@ export function ShopChatbot({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.97 }}
+          initial={{ opacity: 0, y: 18, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 20, scale: 0.97 }}
+          exit={{ opacity: 0, y: 18, scale: 0.97 }}
           transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-          className="fixed bottom-20 md:bottom-6 right-3 left-3 md:left-auto md:right-6 md:w-[410px] z-50 rounded-3xl bg-[#121216]/95 backdrop-blur-xl border border-[#D4AF37]/30 shadow-2xl shadow-black/80 flex flex-col max-h-[72vh] overflow-hidden"
+          className="fixed bottom-20 md:bottom-6 right-3 left-3 md:left-auto md:right-6 md:w-[400px] z-50 rounded-2xl bg-white border border-zinc-200 shadow-2xl flex flex-col max-h-[72vh] overflow-hidden"
           role="dialog"
           aria-label="New Chiko Watch and Electronics Concierge"
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3.5 border-b border-white/[0.08] bg-[#0E0E12]">
+          <div className="flex items-center justify-between px-4 py-3.5 border-b border-zinc-200 bg-[#09090B] text-white">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-[#D4AF37]/15 border border-[#D4AF37]/35 flex items-center justify-center text-[#D4AF37]">
+              <div className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-white">
                 <MessageSquare size={17} />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-[#F8F9FA]">
+                <h3 className="text-sm font-semibold text-white">
                   Chiko Concierge
                 </h3>
-                <p className="text-[11px] text-[#9CA3AF]">
+                <p className="text-[11px] text-zinc-400">
                   Bangla · Banglish · English
                 </p>
               </div>
@@ -141,7 +141,7 @@ export function ShopChatbot({
             <button
               type="button"
               onClick={() => onToggle(false)}
-              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-[#9CA3AF] hover:text-[#F8F9FA] hover:bg-white/[0.06]"
+              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               aria-label="Close concierge chat"
             >
               <X size={18} />
@@ -149,7 +149,7 @@ export function ShopChatbot({
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#FAFAFA]">
             {messages.map((msg) => {
               const matchedProducts = (msg.recommendedWatchIds || [])
                 .map((id) => watches.find((w) => w.id === id))
@@ -165,8 +165,8 @@ export function ShopChatbot({
                   <div
                     className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                       msg.role === 'user'
-                        ? 'bg-[#D4AF37] text-[#0A0A0C] font-medium'
-                        : 'bg-[#1A1A20] text-[#F8F9FA] border border-white/[0.08]'
+                        ? 'bg-[#09090B] text-white font-medium'
+                        : 'bg-white text-zinc-900 border border-zinc-200 shadow-2xs'
                     }`}
                   >
                     {msg.text}
@@ -179,9 +179,9 @@ export function ShopChatbot({
                           key={w.id}
                           type="button"
                           onClick={() => onSelectWatch(w)}
-                          className="w-full text-left rounded-xl bg-[#0A0A0C] border border-white/[0.1] hover:border-[#D4AF37]/50 p-2.5 flex items-center gap-3 transition-colors cursor-pointer"
+                          className="w-full text-left rounded-xl bg-white border border-zinc-200 hover:border-zinc-900/40 hover:shadow-sm p-2.5 flex items-center gap-3 transition-all cursor-pointer"
                         >
-                          <div className="w-12 h-10 rounded-lg overflow-hidden bg-[#141418] shrink-0">
+                          <div className="w-12 h-10 rounded-lg overflow-hidden bg-zinc-100 shrink-0">
                             <WatchImage
                               src={w.image_url}
                               alt={w.model}
@@ -192,14 +192,14 @@ export function ShopChatbot({
                             />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold text-[#F8F9FA] truncate">
+                            <p className="text-xs font-semibold text-zinc-950 truncate">
                               {w.product_name || `${w.brand} ${w.model}`}
                             </p>
-                            <p className="text-[11px] text-[#9CA3AF] truncate">
+                            <p className="text-[11px] text-zinc-500 truncate">
                               {w.category} · {w.color}
                             </p>
                           </div>
-                          <span className="font-mono-num text-xs font-semibold text-[#D4AF37] shrink-0">
+                          <span className="font-mono-num text-xs font-bold text-zinc-950 shrink-0">
                             {formatBDT(w.min_selling_price)}
                           </span>
                         </button>
@@ -211,8 +211,8 @@ export function ShopChatbot({
             })}
 
             {sending && (
-              <div className="flex items-center gap-2 text-xs text-[#9CA3AF]">
-                <Loader2 size={14} className="animate-spin text-[#D4AF37]" />
+              <div className="flex items-center gap-2 text-xs text-zinc-500">
+                <Loader2 size={14} className="animate-spin text-zinc-900" />
                 <span>Checking stock...</span>
               </div>
             )}
@@ -221,13 +221,13 @@ export function ShopChatbot({
 
           {/* Starter Quick Prompts */}
           {messages.length <= 2 && (
-            <div className="px-4 pb-2 flex gap-2 overflow-x-auto">
+            <div className="px-4 py-2 bg-[#FAFAFA] flex gap-2 overflow-x-auto no-scrollbar border-t border-zinc-100">
               {STARTER_PROMPTS.map((prompt) => (
                 <button
                   key={prompt}
                   type="button"
                   onClick={() => sendMessage(prompt)}
-                  className="shrink-0 rounded-xl bg-white/[0.05] border border-white/[0.08] hover:border-[#D4AF37]/40 px-3 py-1.5 text-xs text-[#D1D5DB] hover:text-[#F8F9FA] transition-colors cursor-pointer"
+                  className="shrink-0 rounded-lg bg-white border border-zinc-200 hover:border-zinc-900 px-3 py-1.5 text-xs text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer"
                 >
                   {prompt}
                 </button>
@@ -238,19 +238,19 @@ export function ShopChatbot({
           {/* Input */}
           <form
             onSubmit={handleFormSubmit}
-            className="p-3 border-t border-white/[0.08] bg-[#0E0E12] flex items-center gap-2"
+            className="p-3 border-t border-zinc-200 bg-white flex items-center gap-2"
           >
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask in Bangla, Banglish, or English..."
-              className="flex-1 min-h-[44px] rounded-xl bg-[#18181D] border border-white/[0.1] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+              className="flex-1 min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
             />
             <button
               type="submit"
               disabled={!input.trim() || sending}
-              className="min-h-[44px] min-w-[44px] rounded-xl bg-[#D4AF37] text-[#0A0A0C] flex items-center justify-center hover:bg-[#E5C158] disabled:opacity-40 transition-colors cursor-pointer"
+              className="min-h-[44px] min-w-[44px] rounded-xl bg-[#09090B] text-white flex items-center justify-center hover:bg-zinc-800 disabled:opacity-40 transition-all active:scale-95 cursor-pointer"
               aria-label="Send message"
             >
               <Send size={17} />

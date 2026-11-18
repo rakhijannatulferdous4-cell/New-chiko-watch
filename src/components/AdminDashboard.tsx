@@ -366,7 +366,7 @@ export function AdminDashboard({
       const msg = err instanceof Error ? err.message : 'Failed to save product.';
       setSaveError(
         msg.startsWith('{')
-          ? 'Cloud database rejected this save. Please make sure you are signed in with your owner Google account and try again.'
+          ? 'Cloud database rejected this save. Please try again.'
           : msg
       );
     } finally {
@@ -375,17 +375,22 @@ export function AdminDashboard({
   };
 
   return (
-    <section className="space-y-6">
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className="space-y-6"
+    >
       {/* Header Row */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-3xl bg-[#121216]/90 border border-[#D4AF37]/25 p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-white border border-zinc-200 p-5 shadow-xs">
         <div>
-          <p className="text-xs text-[#D4AF37] font-medium tracking-wider uppercase">
+          <p className="text-xs text-zinc-500 font-semibold tracking-wider uppercase">
             Admin Mode · {adminUsername}
           </p>
-          <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#F8F9FA]">
+          <h2 className="font-display text-2xl sm:text-3xl font-semibold text-[#09090B]">
             Watch &amp; Electronics Inventory
           </h2>
-          <p className="text-xs text-[#9CA3AF] mt-1">
+          <p className="text-xs text-zinc-500 mt-1">
             Storage:{' '}
             {isSupabaseConfigured || storageSource === 'supabase'
               ? 'Supabase Cloud Database (Permanent 24/7 Live Storage)'
@@ -400,7 +405,7 @@ export function AdminDashboard({
           <button
             type="button"
             onClick={openAddModal}
-            className="min-h-[44px] px-4 rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm flex items-center gap-2 hover:bg-[#E5C158] transition-colors whitespace-nowrap cursor-pointer"
+            className="min-h-[44px] px-4 rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-[0.98] whitespace-nowrap cursor-pointer"
           >
             <Plus size={17} />
             <span>Add Product</span>
@@ -408,7 +413,7 @@ export function AdminDashboard({
           <button
             type="button"
             onClick={onLogout}
-            className="min-h-[44px] px-3.5 rounded-xl border border-white/[0.12] text-xs font-medium text-[#D1D5DB] hover:bg-white/[0.06] flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+            className="min-h-[44px] px-3.5 rounded-xl border border-zinc-300 bg-white text-xs font-medium text-zinc-800 hover:bg-zinc-50 flex items-center gap-1.5 transition-all active:scale-[0.98] whitespace-nowrap cursor-pointer"
           >
             <LogOut size={15} />
             <span>Exit Admin</span>
@@ -417,110 +422,110 @@ export function AdminDashboard({
       </div>
 
       {!isSupabaseConfigured && storageSource !== 'supabase' && (
-        <div className="rounded-2xl bg-amber-500/10 border border-amber-400/35 px-4 py-3 text-xs text-amber-200 leading-relaxed space-y-1">
-          <p className="font-semibold text-amber-300">
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-900 leading-relaxed space-y-1">
+          <p className="font-semibold">
             Supabase environment keys are not detected on this server yet
           </p>
-          <p className="text-[#D1D5DB]">
-            Add <code className="text-amber-200">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
-            <code className="text-amber-200">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in AI Studio Secrets (or Cloud Run / Vercel Environment Variables) and run{' '}
-            <code className="text-amber-200">schema.sql</code> in Supabase SQL Editor so products stay permanently saved 24/7 across restarts.
+          <p>
+            Add <code className="font-mono font-semibold">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
+            <code className="font-mono font-semibold">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in AI Studio Secrets and run{' '}
+            <code className="font-mono font-semibold">schema.sql</code> in Supabase SQL Editor.
           </p>
         </div>
       )}
 
       {cloudError && (
-        <div className="rounded-2xl bg-rose-500/10 border border-rose-500/35 px-4 py-3 text-xs text-rose-200 leading-relaxed">
+        <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-xs text-rose-700 leading-relaxed">
           {cloudError}
         </div>
       )}
 
       {cloudNotice && (
-        <div className="rounded-2xl bg-emerald-500/10 border border-emerald-400/30 px-4 py-3 text-xs text-emerald-300">
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-xs text-emerald-800 font-medium">
           {cloudNotice}
         </div>
       )}
 
       {/* Analytics KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="rounded-2xl bg-[#121216]/85 border border-white/[0.08] p-4">
-          <div className="flex items-center justify-between text-xs text-[#9CA3AF]">
+        <div className="rounded-xl bg-white border border-zinc-200 p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs text-zinc-500">
             <span>Stock Inventory</span>
-            <Package size={15} className="text-[#D4AF37]" />
+            <Package size={15} className="text-zinc-900" />
           </div>
-          <p className="font-mono-num text-2xl font-semibold text-[#F8F9FA] mt-2">
+          <p className="font-mono-num text-2xl font-bold text-[#09090B] mt-2">
             {analytics.totalUnits}
           </p>
-          <p className="text-xs text-[#9CA3AF] mt-1">
+          <p className="text-xs text-zinc-500 mt-1">
             Across {analytics.totalModels} products
           </p>
         </div>
 
-        <div className="rounded-2xl bg-[#121216]/85 border border-white/[0.08] p-4">
-          <div className="flex items-center justify-between text-xs text-[#9CA3AF]">
+        <div className="rounded-xl bg-white border border-zinc-200 p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs text-zinc-500">
             <span>Wholesale Valuation</span>
-            <TrendingUp size={15} className="text-[#D4AF37]" />
+            <TrendingUp size={15} className="text-zinc-900" />
           </div>
-          <p className="font-mono-num text-xl sm:text-2xl font-semibold text-[#F8F9FA] mt-2">
+          <p className="font-mono-num text-xl sm:text-2xl font-bold text-[#09090B] mt-2">
             {formatBDT(analytics.totalWholesaleCost)}
           </p>
-          <p className="text-xs text-[#9CA3AF] mt-1">Actual cost invested</p>
+          <p className="text-xs text-zinc-500 mt-1">Actual cost invested</p>
         </div>
 
-        <div className="rounded-2xl bg-[#121216]/85 border border-white/[0.08] p-4">
-          <div className="flex items-center justify-between text-xs text-[#9CA3AF]">
+        <div className="rounded-xl bg-white border border-zinc-200 p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs text-zinc-500">
             <span>Projected Profit</span>
-            <TrendingUp size={15} className="text-emerald-400" />
+            <TrendingUp size={15} className="text-emerald-700" />
           </div>
-          <p className="font-mono-num text-xl sm:text-2xl font-semibold text-emerald-400 mt-2">
+          <p className="font-mono-num text-xl sm:text-2xl font-bold text-emerald-700 mt-2">
             {formatBDT(analytics.projectedProfit)}
           </p>
-          <p className="text-xs text-[#9CA3AF] mt-1">
+          <p className="text-xs text-zinc-500 mt-1">
             Avg margin {analytics.avgMarginPct}%
           </p>
         </div>
 
-        <div className="rounded-2xl bg-[#121216]/85 border border-white/[0.08] p-4">
-          <div className="flex items-center justify-between text-xs text-[#9CA3AF]">
+        <div className="rounded-xl bg-white border border-zinc-200 p-4 shadow-2xs">
+          <div className="flex items-center justify-between text-xs text-zinc-500">
             <span>Low Stock Alerts</span>
             <AlertTriangle
               size={15}
-              className={analytics.lowStockCount > 0 ? 'text-amber-400' : 'text-[#9CA3AF]'}
+              className={analytics.lowStockCount > 0 ? 'text-amber-600' : 'text-zinc-400'}
             />
           </div>
-          <p className="font-mono-num text-2xl font-semibold text-[#F8F9FA] mt-2">
+          <p className="font-mono-num text-2xl font-bold text-[#09090B] mt-2">
             {analytics.lowStockCount}
           </p>
-          <p className="text-xs text-[#9CA3AF] mt-1">Items with 2 or fewer units</p>
+          <p className="text-xs text-zinc-500 mt-1">Items with 2 or fewer units</p>
         </div>
       </div>
 
       {/* Inventory Management Table / Mobile Cards */}
-      <div className="rounded-3xl bg-[#121216]/85 border border-white/[0.08] overflow-hidden">
-        <div className="px-5 py-4 border-b border-white/[0.08] flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[#F8F9FA]">
+      <div className="rounded-2xl bg-white border border-zinc-200 overflow-hidden shadow-xs">
+        <div className="px-5 py-4 border-b border-zinc-200 flex items-center justify-between bg-zinc-50/70">
+          <h3 className="text-sm font-semibold text-[#09090B]">
             Live Stock &amp; Wholesale Ledger
           </h3>
-          <span className="text-xs text-[#9CA3AF] font-mono-num">
+          <span className="text-xs text-zinc-500 font-mono-num">
             {watches.length} entries
           </span>
         </div>
 
         {watches.length === 0 ? (
           <div className="py-12 px-5 text-center space-y-3">
-            <p className="text-sm text-[#A1A1AA]">
+            <p className="text-sm text-zinc-500">
               Your electronics inventory is empty.
             </p>
             <button
               type="button"
               onClick={openAddModal}
-              className="min-h-[44px] px-5 rounded-xl bg-[#D4AF37] text-[#0A0A0C] text-xs font-semibold hover:bg-[#E5C158] transition-colors cursor-pointer"
+              className="min-h-[44px] px-5 rounded-xl bg-[#09090B] text-white text-xs font-semibold hover:bg-zinc-800 transition-colors cursor-pointer"
             >
               Add First Product
             </button>
           </div>
         ) : (
-          <div className="divide-y divide-white/[0.06]">
+          <div className="divide-y divide-zinc-100">
             {watches.map((product) => {
               const unitProfit = product.min_selling_price - product.real_buying_price;
               const isDeleting = confirmDeleteId === product.id;
@@ -528,10 +533,10 @@ export function AdminDashboard({
               return (
                 <div
                   key={product.id}
-                  className="p-4 sm:px-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-white/[0.02] transition-colors"
+                  className="p-4 sm:px-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 hover:bg-zinc-50/70 transition-colors"
                 >
                   <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="w-16 h-12 rounded-xl overflow-hidden bg-[#0A0A0C] border border-white/[0.08] shrink-0">
+                    <div className="w-16 h-12 rounded-lg overflow-hidden bg-zinc-100 border border-zinc-200 shrink-0">
                       <WatchImage
                         src={product.image_url}
                         alt={product.model}
@@ -542,15 +547,15 @@ export function AdminDashboard({
                       />
                     </div>
                     <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-[#9CA3AF]">
-                        <span className="text-[#D4AF37] font-medium">{product.brand}</span>
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+                        <span className="text-zinc-900 font-semibold uppercase">{product.brand}</span>
                         <span aria-hidden="true">·</span>
                         <span>{product.category}</span>
                       </div>
-                      <p className="text-sm font-semibold text-[#F8F9FA] truncate">
+                      <p className="text-sm font-semibold text-[#09090B] truncate">
                         {product.product_name || product.model}
                       </p>
-                      <p className="text-xs text-[#9CA3AF] truncate">
+                      <p className="text-xs text-zinc-500 truncate">
                         {product.product_name && product.model ? `${product.model} · ` : ''}
                         {product.color}
                       </p>
@@ -560,43 +565,43 @@ export function AdminDashboard({
                   <div className="flex flex-wrap items-center justify-between lg:justify-end gap-4 sm:gap-6">
                     <div className="grid grid-cols-3 gap-4 text-xs">
                       <div>
-                        <p className="text-[#9CA3AF]">Tag Price</p>
-                        <p className="font-mono-num text-[#D1D5DB] mt-0.5">
+                        <p className="text-zinc-500">Tag Price</p>
+                        <p className="font-mono-num text-zinc-800 font-medium mt-0.5">
                           {formatBDT(product.display_buying_price)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-[#9CA3AF]">Real Cost</p>
-                        <p className="font-mono-num text-amber-300 mt-0.5">
+                        <p className="text-zinc-500">Real Cost</p>
+                        <p className="font-mono-num text-zinc-950 font-semibold mt-0.5">
                           {formatBDT(product.real_buying_price)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-[#9CA3AF]">Offer / Profit</p>
-                        <p className="font-mono-num text-emerald-400 mt-0.5">
+                        <p className="text-zinc-500">Offer / Profit</p>
+                        <p className="font-mono-num text-emerald-700 font-semibold mt-0.5">
                           {formatBDT(product.min_selling_price)} (+{formatBDT(unitProfit)})
                         </p>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1 bg-[#0A0A0C] border border-white/[0.1] rounded-xl p-0.5">
+                      <div className="flex items-center gap-1 bg-zinc-50 border border-zinc-200 rounded-xl p-0.5">
                         <button
                           type="button"
                           onClick={() => onAdjustStock(product.id, -1)}
                           disabled={product.stock_count <= 0}
-                          className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg text-[#A1A1AA] hover:text-[#F8F9FA] disabled:opacity-35"
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-zinc-600 hover:text-zinc-950 hover:bg-white disabled:opacity-35 cursor-pointer"
                           aria-label={`Decrease stock of ${product.model}`}
                         >
                           <Minus size={14} />
                         </button>
-                        <span className="font-mono-num text-xs font-semibold px-2 text-[#F8F9FA]">
+                        <span className="font-mono-num text-xs font-bold px-2 text-[#09090B]">
                           {product.stock_count}
                         </span>
                         <button
                           type="button"
                           onClick={() => onAdjustStock(product.id, 1)}
-                          className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg text-[#A1A1AA] hover:text-[#F8F9FA]"
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-zinc-600 hover:text-zinc-950 hover:bg-white cursor-pointer"
                           aria-label={`Increase stock of ${product.model}`}
                         >
                           <Plus size={14} />
@@ -606,7 +611,7 @@ export function AdminDashboard({
                       <button
                         type="button"
                         onClick={() => openEditModal(product)}
-                        className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-white/[0.1] text-[#D4AF37] hover:bg-[#D4AF37]/10"
+                        className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-zinc-200 text-zinc-900 hover:bg-zinc-100 transition-colors cursor-pointer"
                         aria-label={`Edit ${product.model}`}
                       >
                         <Pencil size={15} />
@@ -620,14 +625,14 @@ export function AdminDashboard({
                               onDeleteWatch(product.id);
                               setConfirmDeleteId(null);
                             }}
-                            className="min-h-[40px] px-2.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-xs font-medium text-rose-300 flex items-center gap-1"
+                            className="min-h-[40px] px-2.5 rounded-xl bg-rose-600 text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
                           >
                             <Check size={13} /> Confirm
                           </button>
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteId(null)}
-                            className="min-h-[40px] px-2 rounded-xl border border-white/[0.1] text-xs text-[#9CA3AF]"
+                            className="min-h-[40px] px-2 rounded-xl border border-zinc-200 text-xs text-zinc-600 cursor-pointer"
                           >
                             Cancel
                           </button>
@@ -636,7 +641,7 @@ export function AdminDashboard({
                         <button
                           type="button"
                           onClick={() => setConfirmDeleteId(product.id)}
-                          className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-white/[0.1] text-rose-400 hover:bg-rose-500/10"
+                          className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-zinc-200 text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                           aria-label={`Delete ${product.model}`}
                         >
                           <Trash2 size={15} />
@@ -654,32 +659,32 @@ export function AdminDashboard({
       {/* Add / Edit Product Modal */}
       {formOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/80 backdrop-blur-sm p-0 md:p-6"
+          className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/50 backdrop-blur-xs p-0 md:p-6"
           onClick={() => setFormOpen(false)}
           role="dialog"
           aria-modal="true"
           aria-label={editingId ? 'Edit Product' : 'Add New Product'}
         >
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            initial={{ opacity: 0, y: 20, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full md:max-w-2xl max-h-[92vh] overflow-y-auto rounded-t-3xl md:rounded-3xl bg-[#121216] border border-white/[0.12] p-5 sm:p-6 shadow-2xl"
+            className="w-full md:max-w-2xl max-h-[92vh] overflow-y-auto rounded-t-3xl md:rounded-2xl bg-white border border-zinc-200 p-5 sm:p-6 shadow-2xl"
           >
-            <div className="flex items-center justify-between pb-4 border-b border-white/[0.08]">
+            <div className="flex items-center justify-between pb-4 border-b border-zinc-200">
               <div>
-                <h3 className="font-display text-2xl font-semibold text-[#F8F9FA]">
+                <h3 className="font-display text-2xl font-semibold text-[#09090B]">
                   {editingId ? 'Edit Product' : 'Add Watch or Electronics Item'}
                 </h3>
-                <p className="text-xs text-[#9CA3AF]">
+                <p className="text-xs text-zinc-500">
                   Upload a photo and use Auto-Fill with AI to populate details automatically
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setFormOpen(false)}
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/[0.05] text-[#9CA3AF] hover:text-[#F8F9FA]"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 hover:text-zinc-950 cursor-pointer"
                 aria-label="Close form"
               >
                 <X size={18} />
@@ -687,10 +692,10 @@ export function AdminDashboard({
             </div>
 
             <form onSubmit={handleSave} className="space-y-4 pt-5">
-              {/* Photo Upload / Camera Capture + Prominent Gold Auto-Fill with AI */}
-              <div className="rounded-2xl bg-[#0A0A0C] border border-white/[0.08] p-4 space-y-3.5">
+              {/* Photo Upload / Camera Capture + Auto-Fill with AI */}
+              <div className="rounded-xl bg-zinc-50 border border-zinc-200 p-4 space-y-3.5">
                 <div className="flex flex-col sm:flex-row items-center gap-4">
-                  <div className="w-28 h-24 rounded-xl overflow-hidden bg-[#141418] border border-white/[0.08] shrink-0">
+                  <div className="w-28 h-24 rounded-xl overflow-hidden bg-white border border-zinc-200 shrink-0">
                     <WatchImage
                       src={form.image_url}
                       alt="Preview"
@@ -722,7 +727,7 @@ export function AdminDashboard({
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={uploadingPhoto}
-                        className="min-h-[44px] px-4 rounded-xl bg-white/[0.07] border border-white/[0.12] text-xs font-medium text-[#F8F9FA] hover:bg-white/[0.12] flex items-center gap-2 cursor-pointer"
+                        className="min-h-[44px] px-4 rounded-xl bg-white border border-zinc-300 text-xs font-semibold text-zinc-900 hover:bg-zinc-100 flex items-center gap-2 cursor-pointer"
                       >
                         <Upload size={15} />
                         <span>{uploadingPhoto ? 'Processing...' : 'Upload Photo'}</span>
@@ -732,7 +737,7 @@ export function AdminDashboard({
                         type="button"
                         onClick={() => cameraInputRef.current?.click()}
                         disabled={uploadingPhoto}
-                        className="min-h-[44px] px-4 rounded-xl bg-white/[0.07] border border-white/[0.12] text-xs font-medium text-[#F8F9FA] hover:bg-white/[0.12] flex items-center gap-2 cursor-pointer"
+                        className="min-h-[44px] px-4 rounded-xl bg-white border border-zinc-300 text-xs font-semibold text-zinc-900 hover:bg-zinc-100 flex items-center gap-2 cursor-pointer"
                       >
                         <Camera size={15} />
                         <span>Take Photo</span>
@@ -740,10 +745,10 @@ export function AdminDashboard({
                     </div>
 
                     {photoProviderLabel && (
-                      <p className="text-[11px] text-emerald-400">{photoProviderLabel}</p>
+                      <p className="text-[11px] font-medium text-emerald-700">{photoProviderLabel}</p>
                     )}
                     {!hasPhoto && (
-                      <p className="text-[11px] text-[#9CA3AF]">
+                      <p className="text-[11px] text-zinc-500">
                         Upload or capture a photo to unlock AI Auto-Fill.
                       </p>
                     )}
@@ -755,7 +760,7 @@ export function AdminDashboard({
                     type="button"
                     onClick={handleAiAutoFill}
                     disabled={aiFilling || uploadingPhoto}
-                    className="w-full min-h-[48px] px-5 rounded-xl bg-gradient-to-r from-[#D4AF37] via-[#E8C55B] to-[#D4AF37] text-[#0A0A0C] font-semibold text-sm shadow-lg shadow-[#D4AF37]/25 hover:brightness-105 disabled:opacity-60 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    className="w-full min-h-[46px] px-5 rounded-xl bg-[#09090B] text-white font-semibold text-sm hover:bg-zinc-800 disabled:opacity-60 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
                   >
                     {aiFilling ? (
                       <>
@@ -765,65 +770,65 @@ export function AdminDashboard({
                     ) : (
                       <>
                         <Sparkles size={17} />
-                        <span>✨ Auto-Fill Details with AI</span>
+                        <span>Auto-Fill Details with AI</span>
                       </>
                     )}
                   </button>
                 )}
 
                 {aiSuccessMsg && (
-                  <p className="text-xs text-emerald-400 flex items-center gap-1.5">
+                  <p className="text-xs text-emerald-700 font-medium flex items-center gap-1.5">
                     <Check size={14} className="shrink-0" />
                     <span>{aiSuccessMsg}</span>
                   </p>
                 )}
-                {aiError && <p className="text-xs text-rose-400">{aiError}</p>}
+                {aiError && <p className="text-xs text-rose-600">{aiError}</p>}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div className="space-y-1 sm:col-span-2">
-                  <label className="text-xs text-[#D1D5DB]">Product Name</label>
+                  <label className="text-xs font-medium text-zinc-700">Product Name</label>
                   <input
                     type="text"
                     required
                     value={form.product_name || ''}
                     onChange={(e) => setForm({ ...form, product_name: e.target.value })}
                     placeholder="e.g. Casio Edifice Slim Sapphire Steel Watch or Oraimo FreePods 4 ANC"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Brand</label>
+                  <label className="text-xs font-medium text-zinc-700">Brand</label>
                   <input
                     type="text"
                     required
                     value={form.brand}
                     onChange={(e) => setForm({ ...form, brand: e.target.value })}
                     placeholder="e.g. Casio, Seiko, Oraimo, Anker, JBL"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Model Number / Name</label>
+                  <label className="text-xs font-medium text-zinc-700">Model Number / Name</label>
                   <input
                     type="text"
                     required
                     value={form.model}
                     onChange={(e) => setForm({ ...form, model: e.target.value })}
                     placeholder="e.g. EFR-S108D-1AV or OTW-330"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Category</label>
+                  <label className="text-xs font-medium text-zinc-700">Category</label>
                   <select
                     value={form.category}
                     onChange={(e) =>
                       setForm({ ...form, category: e.target.value as ProductCategory })
                     }
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] focus:outline-none focus:bg-white focus:border-zinc-950"
                   >
                     {CATEGORY_OPTIONS.map((cat) => (
                       <option key={cat} value={cat}>
@@ -834,44 +839,44 @@ export function AdminDashboard({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Color / Strap / Finish</label>
+                  <label className="text-xs font-medium text-zinc-700">Color / Strap / Finish</label>
                   <input
                     type="text"
                     required
                     value={form.color}
                     onChange={(e) => setForm({ ...form, color: e.target.value })}
                     placeholder="e.g. Black / Steel or Matte White"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Movement / Connectivity</label>
+                  <label className="text-xs font-medium text-zinc-700">Movement / Connectivity</label>
                   <input
                     type="text"
                     value={form.connectivity}
                     onChange={(e) => setForm({ ...form, connectivity: e.target.value })}
                     placeholder="e.g. Japanese Quartz or Bluetooth 5.3 · USB-C"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Case Size / Spec / Capacity</label>
+                  <label className="text-xs font-medium text-zinc-700">Case Size / Spec / Capacity</label>
                   <input
                     type="text"
                     value={form.capacity_spec}
                     onChange={(e) => setForm({ ...form, capacity_spec: e.target.value })}
                     placeholder="e.g. 40mm · 5ATM or 20,000mAh · 22.5W"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
               </div>
 
-              {/* Three-Tier Pricing Inputs (String-backed so leading 0 never gets stuck) */}
+              {/* Three-Tier Pricing Inputs */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Tag Price (৳)</label>
+                  <label className="text-xs font-medium text-zinc-700">Tag Price (৳)</label>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -881,11 +886,11 @@ export function AdminDashboard({
                       handleNumericFieldChange('display_buying_price', e.target.value)
                     }
                     placeholder="e.g. 2500"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3 font-mono-num text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3 font-mono-num text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-amber-300">Real Cost (৳)</label>
+                  <label className="text-xs font-semibold text-amber-800">Real Cost (৳)</label>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -895,11 +900,11 @@ export function AdminDashboard({
                       handleNumericFieldChange('real_buying_price', e.target.value)
                     }
                     placeholder="e.g. 1400"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-amber-400/30 px-3 font-mono-num text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-amber-50/50 border border-amber-300 px-3 font-mono-num text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-emerald-300">Offer Price (৳)</label>
+                  <label className="text-xs font-semibold text-emerald-800">Offer Price (৳)</label>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -909,11 +914,11 @@ export function AdminDashboard({
                       handleNumericFieldChange('min_selling_price', e.target.value)
                     }
                     placeholder="e.g. 1950"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-emerald-400/30 px-3 font-mono-num text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-emerald-50/50 border border-emerald-300 px-3 font-mono-num text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-[#D1D5DB]">Stock Qty</label>
+                  <label className="text-xs font-medium text-zinc-700">Stock Qty</label>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -921,24 +926,26 @@ export function AdminDashboard({
                     value={numericDrafts.stock_count}
                     onChange={(e) => handleNumericFieldChange('stock_count', e.target.value)}
                     placeholder="1"
-                    className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3 font-mono-num text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                    className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3 font-mono-num text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs text-[#D1D5DB]">Short Attractive Description</label>
+                <label className="text-xs font-medium text-zinc-700">
+                  Short Attractive Description
+                </label>
                 <textarea
                   rows={2}
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   placeholder="Highlights visible features, strap/build style, finish, and key specs..."
-                  className="w-full rounded-xl bg-[#0A0A0C] border border-white/[0.12] p-3 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+                  className="w-full rounded-xl bg-zinc-50 border border-zinc-300 p-3 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
                 />
               </div>
 
               {saveError && (
-                <div className="rounded-xl bg-rose-500/10 border border-rose-500/35 px-3.5 py-2.5 text-xs text-rose-200">
+                <div className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-xs text-rose-700">
                   {saveError}
                 </div>
               )}
@@ -947,14 +954,14 @@ export function AdminDashboard({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex-1 min-h-[48px] rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm hover:bg-[#E5C158] disabled:opacity-50 transition-colors cursor-pointer"
+                  className="flex-1 min-h-[46px] rounded-xl bg-[#09090B] text-white font-semibold text-sm hover:bg-zinc-800 disabled:opacity-50 transition-all active:scale-[0.98] cursor-pointer"
                 >
                   {saving ? 'Saving...' : editingId ? 'Save Changes' : 'Add to Inventory'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormOpen(false)}
-                  className="min-h-[48px] px-5 rounded-xl border border-white/[0.12] text-sm text-[#D1D5DB] hover:bg-white/[0.05] cursor-pointer"
+                  className="min-h-[46px] px-5 rounded-xl border border-zinc-300 bg-white text-sm font-medium text-zinc-800 hover:bg-zinc-50 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -963,6 +970,6 @@ export function AdminDashboard({
           </motion.div>
         </div>
       )}
-    </section>
+    </motion.section>
   );
 }

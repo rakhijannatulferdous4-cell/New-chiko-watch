@@ -39,7 +39,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -51,18 +51,18 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
         exit={{ opacity: 0, scale: 0.96, y: 12 }}
         transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-3xl bg-[#121216] border border-[#D4AF37]/30 p-6 shadow-2xl space-y-5"
+        className="w-full max-w-md rounded-2xl bg-white border border-zinc-200 p-6 shadow-2xl space-y-5"
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-[#D4AF37]/15 border border-[#D4AF37]/35 flex items-center justify-center text-[#D4AF37]">
+            <div className="w-11 h-11 rounded-xl bg-zinc-950 text-white flex items-center justify-center">
               <ShieldCheck size={22} />
             </div>
             <div>
-              <h2 className="font-display text-2xl font-semibold text-[#F8F9FA]">
+              <h2 className="font-display text-2xl font-semibold text-[#09090B]">
                 Shopkeeper Access
               </h2>
-              <p className="text-xs text-[#9CA3AF]">
+              <p className="text-xs text-zinc-500">
                 New Chiko Watch &amp; Electronics Console
               </p>
             </div>
@@ -70,7 +70,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[#9CA3AF] hover:text-[#F8F9FA] hover:bg-white/[0.06]"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-zinc-500 hover:text-zinc-950 hover:bg-zinc-100 transition-colors cursor-pointer"
             aria-label="Close login modal"
           >
             <X size={18} />
@@ -79,7 +79,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label htmlFor="admin-user" className="text-xs font-medium text-[#D1D5DB]">
+            <label htmlFor="admin-user" className="text-xs font-semibold text-zinc-700">
               Username
             </label>
             <input
@@ -90,12 +90,12 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
               placeholder="admin"
               required
               autoComplete="username"
-              className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+              className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
             />
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="admin-pass" className="text-xs font-medium text-[#D1D5DB]">
+            <label htmlFor="admin-pass" className="text-xs font-semibold text-zinc-700">
               Password
             </label>
             <input
@@ -106,12 +106,12 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
               placeholder="••••••••"
               required
               autoComplete="current-password"
-              className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] placeholder:text-[#6B7280] focus:outline-none focus:border-[#D4AF37]"
+              className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-zinc-950"
             />
           </div>
 
           {error && (
-            <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 px-3.5 py-2.5 text-xs text-rose-300">
+            <div className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-xs text-rose-700">
               {error}
             </div>
           )}
@@ -119,7 +119,7 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full min-h-[48px] rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm flex items-center justify-center gap-2 hover:bg-[#E5C158] disabled:opacity-50 transition-colors cursor-pointer"
+            className="w-full min-h-[46px] rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 disabled:opacity-50 transition-all active:scale-[0.98] cursor-pointer"
           >
             <Lock size={16} />
             <span>{loading ? 'Verifying...' : 'Sign In as Shopkeeper'}</span>

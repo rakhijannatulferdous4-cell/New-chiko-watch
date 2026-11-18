@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Copy, Plus, Printer, ReceiptText, Trash2 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { DigitalMemo, MemoLineItem, WatchItem } from '../types/watch';
 import { formatBDT } from './TripleTapPrice';
 
@@ -160,51 +161,58 @@ export function DigitalMemoBuilder({
   };
 
   return (
-    <section className="space-y-6">
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className="space-y-6"
+    >
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Builder Controls */}
-        <div className="lg:col-span-6 rounded-3xl bg-[#121216]/90 border border-white/[0.08] p-5 space-y-5 no-print">
+        <div className="lg:col-span-6 rounded-2xl bg-white border border-zinc-200 p-5 space-y-5 shadow-xs no-print">
           <div>
-            <p className="text-xs text-[#D4AF37] font-medium tracking-wider uppercase">
+            <p className="text-xs text-zinc-500 font-semibold tracking-wider uppercase">
               Quick Digital Memo
             </p>
-            <h2 className="font-display text-2xl font-semibold text-[#F8F9FA]">
+            <h2 className="font-display text-2xl font-semibold text-[#09090B]">
               Branded Receipt Generator
             </h2>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-xs text-[#D1D5DB]">Customer Name</label>
+              <label className="text-xs font-medium text-zinc-700">Customer Name</label>
               <input
                 type="text"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
                 placeholder="e.g. Tanvir Ahmed"
-                className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] focus:outline-none focus:border-[#D4AF37]"
+                className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] focus:outline-none focus:bg-white focus:border-zinc-950"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs text-[#D1D5DB]">Phone Number</label>
+              <label className="text-xs font-medium text-zinc-700">Phone Number</label>
               <input
                 type="tel"
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
                 placeholder="017XXXXXXXX"
-                className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA] font-mono-num focus:outline-none focus:border-[#D4AF37]"
+                className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B] font-mono-num focus:outline-none focus:bg-white focus:border-zinc-950"
               />
             </div>
           </div>
 
           {/* Add Product Line */}
           <div className="space-y-1.5">
-            <label className="text-xs text-[#D1D5DB]">Add Electronics Product to Bill</label>
+            <label className="text-xs font-medium text-zinc-700">
+              Add Electronics Product to Bill
+            </label>
             <div className="flex gap-2">
               <select
                 value={selectedWatchId}
                 onChange={(e) => setSelectedWatchId(e.target.value)}
                 disabled={watches.length === 0}
-                className="flex-1 min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3 text-sm text-[#F8F9FA] focus:outline-none focus:border-[#D4AF37] disabled:opacity-50"
+                className="flex-1 min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3 text-sm text-[#09090B] focus:outline-none focus:bg-white focus:border-zinc-950 disabled:opacity-50"
               >
                 {watches.length === 0 ? (
                   <option value="">No products added yet</option>
@@ -220,7 +228,7 @@ export function DigitalMemoBuilder({
                 type="button"
                 onClick={handleAddWatchLine}
                 disabled={watches.length === 0}
-                className="min-h-[44px] px-4 rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm flex items-center gap-1.5 hover:bg-[#E5C158] disabled:opacity-40 shrink-0 cursor-pointer"
+                className="min-h-[44px] px-4 rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center gap-1.5 hover:bg-zinc-800 disabled:opacity-40 shrink-0 transition-all active:scale-95 cursor-pointer"
               >
                 <Plus size={16} />
                 <span>Add</span>
@@ -234,11 +242,13 @@ export function DigitalMemoBuilder({
               {items.map((item) => (
                 <div
                   key={item.watchId}
-                  className="rounded-2xl bg-[#0A0A0C] border border-white/[0.08] p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  className="rounded-xl bg-zinc-50 border border-zinc-200 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                 >
                   <div className="min-w-0">
-                    <p className="text-xs text-[#D4AF37]">{item.brand}</p>
-                    <p className="text-sm font-medium text-[#F8F9FA] truncate">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                      {item.brand}
+                    </p>
+                    <p className="text-sm font-semibold text-[#09090B] truncate">
                       {item.model}
                     </p>
                   </div>
@@ -255,7 +265,7 @@ export function DigitalMemoBuilder({
                         });
                       }}
                       aria-label="Quantity"
-                      className="w-16 min-h-[40px] rounded-lg bg-[#141418] border border-white/[0.1] px-2 text-center font-mono-num text-xs text-[#F8F9FA]"
+                      className="w-16 min-h-[40px] rounded-lg bg-white border border-zinc-300 px-2 text-center font-mono-num text-xs text-[#09090B]"
                     />
                     <input
                       type="text"
@@ -269,12 +279,12 @@ export function DigitalMemoBuilder({
                       }}
                       placeholder="0"
                       aria-label="Agreed Price"
-                      className="w-28 min-h-[40px] rounded-lg bg-[#141418] border border-white/[0.1] px-2.5 text-right font-mono-num text-xs text-[#F8F9FA]"
+                      className="w-28 min-h-[40px] rounded-lg bg-white border border-zinc-300 px-2.5 text-right font-mono-num text-xs text-[#09090B]"
                     />
                     <button
                       type="button"
                       onClick={() => removeLine(item.watchId)}
-                      className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg text-rose-400 hover:bg-rose-500/10"
+                      className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                       aria-label="Remove item"
                     >
                       <Trash2 size={15} />
@@ -287,13 +297,13 @@ export function DigitalMemoBuilder({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-xs text-[#D1D5DB]">Payment Method</label>
+              <label className="text-xs font-medium text-zinc-700">Payment Method</label>
               <select
                 value={paymentMethod}
                 onChange={(e) =>
                   setPaymentMethod(e.target.value as DigitalMemo['payment_method'])
                 }
-                className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3 text-sm text-[#F8F9FA]"
+                className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3 text-sm text-[#09090B]"
               >
                 <option value="Cash">Cash</option>
                 <option value="bKash">bKash</option>
@@ -302,35 +312,35 @@ export function DigitalMemoBuilder({
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs text-[#D1D5DB]">Extra Discount (৳)</label>
+              <label className="text-xs font-medium text-zinc-700">Extra Discount (৳)</label>
               <input
                 type="text"
                 inputMode="numeric"
                 value={discountStr}
                 onChange={(e) => setDiscountStr(cleanPriceInput(e.target.value))}
                 placeholder="0"
-                className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3 font-mono-num text-sm text-[#F8F9FA]"
+                className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3 font-mono-num text-sm text-[#09090B]"
               />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs text-[#D1D5DB]">Warranty / Memo Note</label>
+            <label className="text-xs font-medium text-zinc-700">Warranty / Memo Note</label>
             <input
               type="text"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full min-h-[44px] rounded-xl bg-[#0A0A0C] border border-white/[0.12] px-3.5 text-sm text-[#F8F9FA]"
+              className="w-full min-h-[44px] rounded-xl bg-zinc-50 border border-zinc-300 px-3.5 text-sm text-[#09090B]"
             />
           </div>
         </div>
 
         {/* Right: Printable Luxury Receipt Preview */}
         <div className="lg:col-span-6 space-y-4">
-          <div className="print-only-sheet rounded-3xl bg-[#F8F9FA] text-[#0A0A0C] p-6 sm:p-8 shadow-2xl border border-[#D4AF37]/40 space-y-6">
+          <div className="print-only-sheet rounded-2xl bg-white text-[#09090B] p-6 sm:p-8 shadow-sm border border-zinc-300 space-y-6">
             <div className="flex items-start justify-between border-b border-zinc-200 pb-5">
               <div>
-                <h3 className="font-display text-3xl font-bold tracking-tight text-[#0A0A0C]">
+                <h3 className="font-display text-3xl font-bold tracking-tight text-[#09090B]">
                   New Chiko Watch
                 </h3>
                 <p className="text-xs text-zinc-500 mt-0.5">
@@ -341,7 +351,7 @@ export function DigitalMemoBuilder({
                 <p className="text-[11px] uppercase tracking-wider text-zinc-500">
                   Digital Memo
                 </p>
-                <p className="font-mono-num text-sm font-semibold text-[#0A0A0C]">
+                <p className="font-mono-num text-sm font-semibold text-[#09090B]">
                   {invoiceNumber}
                 </p>
                 <p className="text-xs text-zinc-500 mt-0.5">
@@ -359,7 +369,7 @@ export function DigitalMemoBuilder({
                 <p className="text-zinc-500 uppercase tracking-wider text-[10px]">
                   Billed To
                 </p>
-                <p className="font-semibold text-sm text-[#0A0A0C] mt-0.5">
+                <p className="font-semibold text-sm text-[#09090B] mt-0.5">
                   {customerName || 'Walk-in Guest'}
                 </p>
                 {customerPhone && (
@@ -370,7 +380,7 @@ export function DigitalMemoBuilder({
                 <p className="text-zinc-500 uppercase tracking-wider text-[10px]">
                   Payment Mode
                 </p>
-                <p className="font-semibold text-sm text-[#0A0A0C] mt-0.5">
+                <p className="font-semibold text-sm text-[#09090B] mt-0.5">
                   {paymentMethod}
                 </p>
               </div>
@@ -394,7 +404,7 @@ export function DigitalMemoBuilder({
                     {items.map((item) => (
                       <tr key={item.watchId}>
                         <td className="py-2.5 pr-2">
-                          <p className="font-semibold text-[#0A0A0C]">
+                          <p className="font-semibold text-[#09090B]">
                             {item.brand} {item.model}
                           </p>
                           <p className="text-[11px] text-zinc-500">
@@ -427,7 +437,7 @@ export function DigitalMemoBuilder({
               )}
               <div className="flex justify-between items-baseline pt-2 border-t border-zinc-200">
                 <span className="font-semibold text-base">Total Payable</span>
-                <span className="font-mono-num text-2xl font-bold text-[#0A0A0C]">
+                <span className="font-mono-num text-2xl font-bold text-[#09090B]">
                   {formatBDT(grandTotal)}
                 </span>
               </div>
@@ -450,7 +460,7 @@ export function DigitalMemoBuilder({
               type="button"
               onClick={handleSaveMemo}
               disabled={items.length === 0 || saving}
-              className="flex-1 min-h-[48px] rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm flex items-center justify-center gap-2 hover:bg-[#E5C158] disabled:opacity-40 cursor-pointer"
+              className="flex-1 min-h-[46px] rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 disabled:opacity-40 transition-all active:scale-[0.98] cursor-pointer"
             >
               <ReceiptText size={17} />
               <span>{saving ? 'Saving...' : 'Save Memo Record'}</span>
@@ -460,9 +470,9 @@ export function DigitalMemoBuilder({
               type="button"
               onClick={handleCopySummary}
               disabled={items.length === 0}
-              className="min-h-[48px] px-4 rounded-xl border border-white/[0.14] text-sm font-medium text-[#F8F9FA] hover:bg-white/[0.06] disabled:opacity-40 flex items-center gap-2 cursor-pointer"
+              className="min-h-[46px] px-4 rounded-xl border border-zinc-300 bg-white text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-40 flex items-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
             >
-              {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
+              {copied ? <Check size={16} className="text-emerald-700" /> : <Copy size={16} />}
               <span>{copied ? 'Copied' : 'Copy Text'}</span>
             </button>
 
@@ -470,7 +480,7 @@ export function DigitalMemoBuilder({
               type="button"
               onClick={() => window.print()}
               disabled={items.length === 0}
-              className="min-h-[48px] px-4 rounded-xl border border-white/[0.14] text-sm font-medium text-[#F8F9FA] hover:bg-white/[0.06] disabled:opacity-40 flex items-center gap-2 cursor-pointer"
+              className="min-h-[46px] px-4 rounded-xl border border-zinc-300 bg-white text-sm font-medium text-zinc-900 hover:bg-zinc-50 disabled:opacity-40 flex items-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
             >
               <Printer size={16} />
               <span>Print</span>
@@ -478,7 +488,7 @@ export function DigitalMemoBuilder({
           </div>
 
           {lastSavedInvoice && (
-            <p className="text-xs text-emerald-400 no-print">
+            <p className="text-xs font-medium text-emerald-700 no-print">
               Saved digital memo {lastSavedInvoice}.
             </p>
           )}
@@ -487,23 +497,23 @@ export function DigitalMemoBuilder({
 
       {/* Saved Memos History */}
       {savedMemos.length > 0 && (
-        <div className="rounded-3xl bg-[#121216]/85 border border-white/[0.08] p-5 space-y-3 no-print">
-          <h3 className="text-sm font-semibold text-[#F8F9FA]">Recent Digital Memos</h3>
-          <div className="divide-y divide-white/[0.06]">
+        <div className="rounded-2xl bg-white border border-zinc-200 p-5 space-y-3 shadow-xs no-print">
+          <h3 className="text-sm font-semibold text-[#09090B]">Recent Digital Memos</h3>
+          <div className="divide-y divide-zinc-100">
             {savedMemos.slice(0, 6).map((memo) => (
               <div
                 key={memo.id}
                 className="py-3 flex flex-wrap items-center justify-between gap-3 text-xs"
               >
                 <div>
-                  <p className="font-mono-num font-semibold text-[#D4AF37]">
+                  <p className="font-mono-num font-bold text-[#09090B]">
                     {memo.invoice_number}
                   </p>
-                  <p className="text-[#D1D5DB] mt-0.5">
+                  <p className="text-zinc-600 mt-0.5">
                     {memo.customer_name} · {memo.items.length} item(s) · {memo.payment_method}
                   </p>
                 </div>
-                <p className="font-mono-num text-sm font-semibold text-[#F8F9FA]">
+                <p className="font-mono-num text-sm font-bold text-[#09090B]">
                   {formatBDT(memo.total_amount)}
                 </p>
               </div>
@@ -511,6 +521,6 @@ export function DigitalMemoBuilder({
           </div>
         </div>
       )}
-    </section>
+    </motion.section>
   );
 }
