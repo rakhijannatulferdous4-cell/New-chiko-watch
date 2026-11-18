@@ -1,0 +1,6 @@
+{
+  "name": "New Chiko Watch",
+  "description": "Mobile-first luxury watch boutique and smart inventory platform for New Chiko Watch featuring Chiko Lens visual search, multilingual AI concierge, triple-tap cost reveal, and digital memo billing.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
