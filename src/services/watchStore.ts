@@ -240,6 +240,34 @@ export async function fetchWatches(adminToken?: string): Promise<{
   return { watches: loadLocalWatches(), source: 'local' };
 }
 
+function isMissingSchemaColumnError(msg: string | undefined): boolean {
+  if (!msg) return false;
+  return (
+    msg.includes('product_name') ||
+    msg.includes('capacity_spec') ||
+    msg.includes('connectivity') ||
+    msg.includes('category')
+  );
+}
+
+function toLegacyWatchPayload(input: Partial<WatchFormInput>): Record<string, unknown> {
+  const legacy: Record<string, unknown> = { ...input };
+  delete legacy.product_name;
+  if ('category' in legacy) {
+    legacy.strap_type = legacy.category;
+    delete legacy.category;
+  }
+  if ('connectivity' in legacy) {
+    legacy.movement = legacy.connectivity;
+    delete legacy.connectivity;
+  }
+  if ('capacity_spec' in legacy) {
+    legacy.case_size = legacy.capacity_spec;
+    delete legacy.capacity_spec;
+  }
+  return legacy;
+}
+
 export async function createWatchRecord(
   input: WatchFormInput,
   currentWatches: WatchItem[],
@@ -265,15 +293,24 @@ export async function createWatchRecord(
         .insert([input])
         .select()
         .single();
-      if (error && 'product_name' in input) {
-        const { product_name: _ignored, ...legacyPayload } = input;
+      if (error && 'product_name' in input && error.message.includes('product_name')) {
+        const { product_name: _ignored, ...noNamePayload } = input;
         const retry = await client
           .from('watches')
-          .insert([legacyPayload])
+          .insert([noNamePayload])
           .select()
           .single();
         data = retry.data;
         error = retry.error;
+      }
+      if (error && isMissingSchemaColumnError(error.message)) {
+        const retryLegacy = await client
+          .from('watches')
+          .insert([toLegacyWatchPayload(input)])
+          .select()
+          .single();
+        data = retryLegacy.data;
+        error = retryLegacy.error;
       }
       if (!error && data) {
         const saved = normalizeProduct(data as Record<string, unknown>);
@@ -350,10 +387,17 @@ export async function updateWatchRecord(
   if (client) {
     try {
       let { error } = await client.from('watches').update(patch).eq('id', id);
-      if (error && 'product_name' in patch) {
-        const { product_name: _ignored, ...legacyPatch } = patch;
-        const retry = await client.from('watches').update(legacyPatch).eq('id', id);
+      if (error && 'product_name' in patch && error.message.includes('product_name')) {
+        const { product_name: _ignored, ...noNamePatch } = patch;
+        const retry = await client.from('watches').update(noNamePatch).eq('id', id);
         error = retry.error;
+      }
+      if (error && isMissingSchemaColumnError(error.message)) {
+        const retryLegacy = await client
+          .from('watches')
+          .update(toLegacyWatchPayload(patch))
+          .eq('id', id);
+        error = retryLegacy.error;
       }
       if (!error) {
         const next = currentWatches.map((w) => (w.id === id ? mergedItem : w));
@@ -470,7 +514,12 @@ export async function syncLocalWatchesToCloud(
       );
       if (missing.length > 0) {
         const payloads = missing.map(({ id: _id, created_at: _c, ...rest }) => rest);
-        const { error } = await client.from('watches').insert(payloads);
+        let { error } = await client.from('watches').insert(payloads);
+        if (error && isMissingSchemaColumnError(error.message)) {
+          const legacyPayloads = payloads.map((p) => toLegacyWatchPayload(p));
+          const retry = await client.from('watches').insert(legacyPayloads);
+          error = retry.error;
+        }
         if (!error) return missing.length;
       }
       return 0;
@@ -551,8 +600,14 @@ export async function fetchAdminMemos(adminToken?: string): Promise<DigitalMemo[
 
 export async function saveMemoRecord(
   memo: DigitalMemo,
-  currentMemos: DigitalMemo[]
+  currentMemos: DigitalMemo[],
+  adminToken?: string
 ): Promise<DigitalMemo[]> {
+  const token = adminToken || getStoredAdminToken();
+  if (!token) {
+    throw new Error('Staff login required to create sales memos.');
+  }
+
   const safeMemoId = toSafeId(memo.id, 'memo');
   const boundedItems = memo.items.slice(0, 50);
   const normalizedMemo: DigitalMemo = {
@@ -591,12 +646,18 @@ export async function saveMemoRecord(
 
   if (!savedToSupabase) {
     try {
-      await fetch('/api/memos', {
+      const res = await fetch('/api/memos', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildAuthHeaders(token),
         body: JSON.stringify(normalizedMemo),
       });
-    } catch {
+      if (res.status === 401) {
+        throw new Error('Staff login expired. Please sign in again to save memos.');
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Staff login')) {
+        throw err;
+      }
       // keep local copy
     }
   }

@@ -237,18 +237,20 @@ export function WatchDetailModal({
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  onAddToMemo(watch, isAdmin ? customerOffer : watch.min_selling_price);
-                  onClose();
-                }}
-                disabled={watch.stock_count <= 0}
-                className="flex-1 min-h-[48px] rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm flex items-center justify-center gap-2 hover:bg-[#E5C158] disabled:opacity-40 transition-colors cursor-pointer"
-              >
-                <ReceiptText size={17} />
-                <span>Create Digital Memo</span>
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onAddToMemo(watch, customerOffer);
+                    onClose();
+                  }}
+                  disabled={watch.stock_count <= 0}
+                  className="flex-1 min-h-[48px] rounded-xl bg-[#D4AF37] text-[#0A0A0C] font-semibold text-sm flex items-center justify-center gap-2 hover:bg-[#E5C158] disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  <ReceiptText size={17} />
+                  <span>Create Digital Memo</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}

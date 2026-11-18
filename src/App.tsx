@@ -23,7 +23,6 @@ import {
   deleteWatchRecord,
   fetchAdminMemos,
   fetchWatches,
-  loadLocalMemos,
   loadLocalWatches,
   saveMemoRecord,
   syncLocalWatchesToCloud,
@@ -136,8 +135,6 @@ function StoreApp() {
     let active = true;
 
     async function initStore() {
-      setSavedMemos(loadLocalMemos());
-
       let validToken = '';
       let validUsername = 'admin';
       try {
@@ -281,6 +278,8 @@ function StoreApp() {
   const handleAdminLogout = () => {
     setIsAdmin(false);
     setAdminToken('');
+    setSavedMemos([]);
+    setDraftMemoItems([]);
     setCloudNotice('');
     setCloudError('');
     setActiveTab('catalog');
@@ -410,6 +409,10 @@ function StoreApp() {
   };
 
   const handleAddToMemo = (watch: WatchItem, agreedPrice?: number) => {
+    if (!isAdmin) {
+      setLoginOpen(true);
+      return;
+    }
     setDraftMemoItems([
       {
         watchId: watch.id,
@@ -429,12 +432,16 @@ function StoreApp() {
   }, []);
 
   const handleSaveMemo = async (memo: DigitalMemo) => {
-    const updated = await saveMemoRecord(memo, savedMemos);
+    if (!isAdmin || !adminToken) {
+      setLoginOpen(true);
+      return;
+    }
+    const updated = await saveMemoRecord(memo, savedMemos, adminToken);
     setSavedMemos(updated);
   };
 
   const handleNavClick = (tab: AppTab) => {
-    if (tab === 'admin' && !isAdmin) {
+    if ((tab === 'admin' || tab === 'memo') && !isAdmin) {
       setLoginOpen(true);
       return;
     }
@@ -488,29 +495,31 @@ function StoreApp() {
             >
               Chiko Lens
             </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick('memo')}
-              className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                activeTab === 'memo'
-                  ? 'text-[#D4AF37] border-b border-[#D4AF37]'
-                  : 'text-[#A1A1AA] hover:text-[#F8F9FA]'
-              }`}
-            >
-              Digital Memo
-            </button>
             {isAdmin && (
-              <button
-                type="button"
-                onClick={() => handleNavClick('admin')}
-                className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                  activeTab === 'admin'
-                    ? 'text-[#D4AF37] border-b border-[#D4AF37]'
-                    : 'text-[#A1A1AA] hover:text-[#F8F9FA]'
-                }`}
-              >
-                Inventory
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleNavClick('memo')}
+                  className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                    activeTab === 'memo'
+                      ? 'text-[#D4AF37] border-b border-[#D4AF37]'
+                      : 'text-[#A1A1AA] hover:text-[#F8F9FA]'
+                  }`}
+                >
+                  Digital Memo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavClick('admin')}
+                  className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                    activeTab === 'admin'
+                      ? 'text-[#D4AF37] border-b border-[#D4AF37]'
+                      : 'text-[#A1A1AA] hover:text-[#F8F9FA]'
+                  }`}
+                >
+                  Inventory
+                </button>
+              </>
             )}
           </nav>
 
@@ -778,7 +787,7 @@ function StoreApp() {
           <ChikoLensView watches={hydratedWatches} onSelectWatch={setSelectedWatch} />
         )}
 
-        {activeTab === 'memo' && (
+        {activeTab === 'memo' && isAdmin && (
           <DigitalMemoBuilder
             watches={hydratedWatches}
             initialItems={draftMemoItems}
@@ -843,7 +852,9 @@ function StoreApp() {
 
       {/* Mobile-First Bottom Navigation Bar */}
       <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-[60px] pb-safe bg-[#0A0A0C]/95 backdrop-blur-xl border-t border-white/[0.08] grid grid-cols-4 items-center no-print"
+        className={`md:hidden fixed bottom-0 left-0 right-0 z-40 h-[60px] pb-safe bg-[#0A0A0C]/95 backdrop-blur-xl border-t border-white/[0.08] grid ${
+          isAdmin ? 'grid-cols-4' : 'grid-cols-3'
+        } items-center no-print`}
         aria-label="Mobile bottom navigation"
       >
         <button
@@ -868,16 +879,18 @@ function StoreApp() {
           <span className="text-[10px] font-medium tracking-tight">Lens</span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => handleNavClick('memo')}
-          className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
-            activeTab === 'memo' ? 'text-[#D4AF37]' : 'text-[#9CA3AF]'
-          }`}
-        >
-          <ReceiptText size={20} />
-          <span className="text-[10px] font-medium tracking-tight">Memo</span>
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => handleNavClick('memo')}
+            className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
+              activeTab === 'memo' ? 'text-[#D4AF37]' : 'text-[#9CA3AF]'
+            }`}
+          >
+            <ReceiptText size={20} />
+            <span className="text-[10px] font-medium tracking-tight">Memo</span>
+          </button>
+        )}
 
         <button
           type="button"

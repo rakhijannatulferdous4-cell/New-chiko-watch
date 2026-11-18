@@ -11,7 +11,13 @@ import { getServerConfig } from './src/config/keys.ts';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT) || 3000;
+const IS_DEV_MODE =
+  process.env.NODE_ENV !== 'production' &&
+  (process.env.NODE_ENV === 'development' ||
+    process.env.npm_lifecycle_event === 'dev' ||
+    (process.env.K_SERVICE || '').startsWith('ais-dev-') ||
+    !fs.existsSync(path.resolve(__dirname, 'dist', 'index.html')));
+const PORT = IS_DEV_MODE ? 3000 : Number(process.env.PORT) || 3000;
 const STORE_DIR = path.resolve(__dirname, '.data');
 const STORE_FILE = path.join(STORE_DIR, 'store.json');
 
@@ -160,14 +166,19 @@ function sanitizeStoredWatch(raw: Record<string, unknown>, existing?: StoredWatc
     model: String(raw.model ?? existing?.model ?? 'Model').trim().slice(0, 120) || 'Model',
     color: String(raw.color ?? existing?.color ?? 'Black').trim().slice(0, 80) || 'Black',
     category:
-      String(raw.category ?? existing?.category ?? 'Gadgets & Accessories').trim().slice(0, 80) ||
-      'Gadgets & Accessories',
+      String(
+        raw.category ?? raw.strap_type ?? existing?.category ?? 'Gadgets & Accessories'
+      )
+        .trim()
+        .slice(0, 80) || 'Gadgets & Accessories',
     connectivity:
-      String(raw.connectivity ?? existing?.connectivity ?? 'Standard').trim().slice(0, 100) ||
-      'Standard',
+      String(raw.connectivity ?? raw.movement ?? existing?.connectivity ?? 'Standard')
+        .trim()
+        .slice(0, 100) || 'Standard',
     capacity_spec:
-      String(raw.capacity_spec ?? existing?.capacity_spec ?? 'Standard').trim().slice(0, 100) ||
-      'Standard',
+      String(raw.capacity_spec ?? raw.case_size ?? existing?.capacity_spec ?? 'Standard')
+        .trim()
+        .slice(0, 100) || 'Standard',
     display_buying_price: toNum(raw.display_buying_price, existing?.display_buying_price ?? 0),
     real_buying_price: toNum(raw.real_buying_price, existing?.real_buying_price ?? 0),
     min_selling_price: toNum(raw.min_selling_price, existing?.min_selling_price ?? 0),
@@ -225,6 +236,33 @@ function buildSupabaseWatchInsert(w: StoredWatch) {
     image_url: w.image_url || '',
     description: w.description || '',
   };
+}
+
+function buildSupabaseLegacyWatchInsert(w: StoredWatch) {
+  return {
+    brand: w.brand,
+    model: w.model,
+    color: w.color,
+    strap_type: w.category,
+    movement: w.connectivity,
+    case_size: w.capacity_spec,
+    display_buying_price: w.display_buying_price,
+    real_buying_price: w.real_buying_price,
+    min_selling_price: w.min_selling_price,
+    stock_count: w.stock_count,
+    image_url: w.image_url || '',
+    description: w.description || '',
+  };
+}
+
+function isMissingColumnError(msg: string | undefined): boolean {
+  if (!msg) return false;
+  return (
+    msg.includes('product_name') ||
+    msg.includes('capacity_spec') ||
+    msg.includes('connectivity') ||
+    msg.includes('category')
+  );
 }
 
 function createGeminiClient(): GoogleGenAI {
@@ -450,14 +488,24 @@ async function startServer() {
         .select()
         .single();
       if (error && error.message.includes('product_name')) {
-        const { product_name: _ignored, ...legacyPayload } = payload;
+        const { product_name: _ignored, ...noNamePayload } = payload;
         const retry = await supabase
           .from('watches')
-          .insert([legacyPayload])
+          .insert([noNamePayload])
           .select()
           .single();
         data = retry.data;
         error = retry.error;
+      }
+      if (error && isMissingColumnError(error.message)) {
+        const legacyPayload = buildSupabaseLegacyWatchInsert(watch);
+        const retryLegacy = await supabase
+          .from('watches')
+          .insert([legacyPayload])
+          .select()
+          .single();
+        data = retryLegacy.data;
+        error = retryLegacy.error;
       }
       if (error || !data) {
         return res.status(502).json({
@@ -498,18 +546,24 @@ async function startServer() {
           ? existingRows.map((r) => `${r.brand}::${r.model}::${r.created_at}`)
           : []
       );
-      const toInsert = [];
+      const sanitizedList: StoredWatch[] = [];
       for (const raw of incoming) {
         if (!raw || typeof raw !== 'object') continue;
         const sanitized = sanitizeStoredWatch(raw as Record<string, unknown>);
         const key = `${sanitized.brand}::${sanitized.model}::${sanitized.created_at}`;
         if (!existingKeys.has(key)) {
           existingKeys.add(key);
-          toInsert.push(buildSupabaseWatchInsert(sanitized));
+          sanitizedList.push(sanitized);
         }
       }
-      if (toInsert.length > 0) {
-        const { error: insertErr } = await supabase.from('watches').insert(toInsert);
+      if (sanitizedList.length > 0) {
+        const toInsert = sanitizedList.map(buildSupabaseWatchInsert);
+        let { error: insertErr } = await supabase.from('watches').insert(toInsert);
+        if (insertErr && isMissingColumnError(insertErr.message)) {
+          const legacyInsert = sanitizedList.map(buildSupabaseLegacyWatchInsert);
+          const retry = await supabase.from('watches').insert(legacyInsert);
+          insertErr = retry.error;
+        }
         if (insertErr) {
           return res.status(502).json({
             ok: false,
@@ -517,7 +571,7 @@ async function startServer() {
           });
         }
       }
-      return res.json({ ok: true, source: 'supabase', added: toInsert.length });
+      return res.json({ ok: true, source: 'supabase', added: sanitizedList.length });
     }
 
     const store = readServerStore();
@@ -576,15 +630,39 @@ async function startServer() {
         .select()
         .single();
       if (error && 'product_name' in allowedPatch && error.message.includes('product_name')) {
-        const { product_name: _ignored, ...legacyPatch } = allowedPatch;
+        const { product_name: _ignored, ...noNamePatch } = allowedPatch;
         const retry = await supabase
           .from('watches')
-          .update(legacyPatch)
+          .update(noNamePatch)
           .eq('id', id)
           .select()
           .single();
         data = retry.data;
         error = retry.error;
+      }
+      if (error && isMissingColumnError(error.message)) {
+        const legacyPatch: Record<string, unknown> = { ...allowedPatch };
+        delete legacyPatch.product_name;
+        if ('category' in legacyPatch) {
+          legacyPatch.strap_type = legacyPatch.category;
+          delete legacyPatch.category;
+        }
+        if ('connectivity' in legacyPatch) {
+          legacyPatch.movement = legacyPatch.connectivity;
+          delete legacyPatch.connectivity;
+        }
+        if ('capacity_spec' in legacyPatch) {
+          legacyPatch.case_size = legacyPatch.capacity_spec;
+          delete legacyPatch.capacity_spec;
+        }
+        const retryLegacy = await supabase
+          .from('watches')
+          .update(legacyPatch)
+          .eq('id', id)
+          .select()
+          .single();
+        data = retryLegacy.data;
+        error = retryLegacy.error;
       }
       if (error) {
         return res.status(502).json({
@@ -639,7 +717,7 @@ async function startServer() {
   app.get('/api/memos', async (req: Request, res: Response) => {
     const admin = verifyAdminToken(req);
     if (!admin) {
-      return res.json({ ok: true, memos: [] });
+      return res.status(401).json({ ok: false, error: 'Staff login required to view sales memos.' });
     }
     const supabase = getServerSupabase();
     if (supabase) {
@@ -648,15 +726,24 @@ async function startServer() {
         .select('*')
         .order('created_at', { ascending: false })
         .limit(50);
-      if (!error && Array.isArray(data)) {
-        return res.json({ ok: true, source: 'supabase', memos: data });
+      if (error) {
+        return res.status(502).json({
+          ok: false,
+          source: 'supabase',
+          error: `Supabase memos query failed: ${error.message}`,
+        });
       }
+      return res.json({ ok: true, source: 'supabase', memos: Array.isArray(data) ? data : [] });
     }
     const store = readServerStore();
     return res.json({ ok: true, source: 'server', memos: store.memos });
   });
 
   app.post('/api/memos', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required to create sales memos.' });
+    }
     const raw = (req.body ?? {}) as Record<string, unknown>;
     const memo: StoredMemo = {
       id:
@@ -695,9 +782,14 @@ async function startServer() {
         ])
         .select()
         .single();
-      if (!error && data) {
-        return res.status(201).json({ ok: true, source: 'supabase', memo: data });
+      if (error || !data) {
+        return res.status(502).json({
+          ok: false,
+          source: 'supabase',
+          error: `Failed to save memo to Supabase: ${error?.message || 'Unknown error'}`,
+        });
       }
+      return res.status(201).json({ ok: true, source: 'supabase', memo: data });
     }
 
     const store = readServerStore();
@@ -1044,9 +1136,7 @@ ${JSON.stringify(publicCatalog)}`,
     }
   });
 
-  const isProduction =
-    process.env.NODE_ENV === 'production' ||
-    Boolean(process.env.K_SERVICE || process.env.K_REVISION);
+  const isProduction = !IS_DEV_MODE;
 
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');

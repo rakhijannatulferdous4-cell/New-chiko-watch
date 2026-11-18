@@ -1,6 +1,6 @@
 -- ============================================================
 -- NEW CHIKO WATCH & ELECTRONICS — SUPABASE POSTGRESQL SCHEMA
--- Run this SQL inside your Supabase SQL Editor to set up tables
+-- Run this SQL inside your Supabase SQL Editor (safe to re-run)
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -26,6 +26,23 @@ CREATE TABLE IF NOT EXISTS public.watches (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Upgrade existing tables safely if created from an earlier version
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS product_name TEXT DEFAULT '';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'New Chiko';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'Model';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT 'Midnight Black';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'Analog Watches';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS connectivity TEXT NOT NULL DEFAULT 'Quartz / Bluetooth';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS capacity_spec TEXT NOT NULL DEFAULT 'Standard';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS display_buying_price NUMERIC(12, 2) NOT NULL DEFAULT 0;
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS real_buying_price NUMERIC(12, 2) NOT NULL DEFAULT 0;
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS min_selling_price NUMERIC(12, 2) NOT NULL DEFAULT 0;
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS stock_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS image_url TEXT DEFAULT '';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE public.watches ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 -- Indexes for fast search & filtering
 CREATE INDEX IF NOT EXISTS idx_products_brand ON public.watches (brand);
 CREATE INDEX IF NOT EXISTS idx_products_category ON public.watches (category);
@@ -45,6 +62,16 @@ CREATE TABLE IF NOT EXISTS public.sales_memos (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS invoice_number TEXT DEFAULT '';
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS customer_name TEXT NOT NULL DEFAULT 'Walk-in Customer';
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS customer_phone TEXT DEFAULT '';
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'Cash';
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12, 2) NOT NULL DEFAULT 0;
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2) NOT NULL DEFAULT 0;
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS items JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.sales_memos ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
 -- 3. Auto-update updated_at trigger
 CREATE OR REPLACE FUNCTION public.set_updated_at()
 RETURNS TRIGGER AS $$
@@ -60,20 +87,34 @@ CREATE TRIGGER trg_watches_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.set_updated_at();
 
--- 4. Row Level Security (RLS)
+-- 4. Permissions & Row Level Security (RLS)
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.watches TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.sales_memos TO anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
 ALTER TABLE public.watches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sales_memos ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow public read on watches" ON public.watches;
 CREATE POLICY "Allow public read on watches"
   ON public.watches FOR SELECT
+  TO anon, authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Allow anon write on watches" ON public.watches;
 CREATE POLICY "Allow anon write on watches"
   ON public.watches FOR ALL
+  TO anon, authenticated
   USING (true)
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Allow all on sales_memos" ON public.sales_memos;
 CREATE POLICY "Allow all on sales_memos"
   ON public.sales_memos FOR ALL
+  TO anon, authenticated
   USING (true)
   WITH CHECK (true);
+
+-- Refresh PostgREST schema cache immediately
+NOTIFY pgrst, 'reload schema';
