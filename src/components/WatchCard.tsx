@@ -40,24 +40,24 @@ export function WatchCard({
   const glareY = useMotionValue(50);
   const activeDepth = useMotionValue(0);
 
-  const rotateX = useSpring(rawRotateX, { stiffness: 280, damping: 20, mass: 0.45 });
-  const rotateY = useSpring(rawRotateY, { stiffness: 280, damping: 20, mass: 0.45 });
-  const smoothDepth = useSpring(activeDepth, { stiffness: 300, damping: 22 });
+  const rotateX = useSpring(rawRotateX, { stiffness: 300, damping: 18, mass: 0.42 });
+  const rotateY = useSpring(rawRotateY, { stiffness: 300, damping: 18, mass: 0.42 });
+  const smoothDepth = useSpring(activeDepth, { stiffness: 320, damping: 20 });
 
-  const imageZ = useTransform(smoothDepth, [0, 1], [0, 26]);
-  const textZ = useTransform(smoothDepth, [0, 1], [0, 16]);
-  const priceZ = useTransform(smoothDepth, [0, 1], [0, 24]);
-  const glareOpacity = useTransform(smoothDepth, [0, 1], [0, 0.92]);
+  const imageZ = useTransform(smoothDepth, [0, 1], [0, 32]);
+  const textZ = useTransform(smoothDepth, [0, 1], [0, 18]);
+  const priceZ = useTransform(smoothDepth, [0, 1], [0, 26]);
+  const glareOpacity = useTransform(smoothDepth, [0, 1], [0, 0.96]);
 
-  const glareBackground = useMotionTemplate`radial-gradient(circle at ${glareX}% ${glareY}%, rgba(255,255,255,0.68), rgba(255,255,255,0.18) 32%, rgba(255,255,255,0) 68%)`;
+  const glareBackground = useMotionTemplate`radial-gradient(circle at ${glareX}% ${glareY}%, rgba(255,255,255,0.75), rgba(255,255,255,0.22) 34%, rgba(255,255,255,0) 70%)`;
 
   const applyTiltFromEvent = (e: React.PointerEvent<HTMLElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     const px = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const py = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    rawRotateX.set((0.5 - py) * 24);
-    rawRotateY.set((px - 0.5) * 24);
+    rawRotateX.set((0.5 - py) * 28);
+    rawRotateY.set((px - 0.5) * 28);
     glareX.set(px * 100);
     glareY.set(py * 100);
     activeDepth.set(1);
@@ -73,13 +73,13 @@ export function WatchCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 36, rotateX: 26, rotateY: -8, scale: 0.85 }}
+      initial={{ opacity: 0, y: 42, rotateX: 28, rotateY: -10, scale: 0.82 }}
       animate={{ opacity: 1, y: 0, rotateX: 0, rotateY: 0, scale: 1 }}
       transition={{
         type: 'spring',
-        stiffness: 240,
-        damping: 20,
-        delay: Math.min(index * 0.04, 0.34),
+        stiffness: 245,
+        damping: 19,
+        delay: Math.min(index * 0.045, 0.36),
       }}
       style={{ perspective: 1000 }}
       className="h-full"
@@ -91,9 +91,9 @@ export function WatchCard({
         onPointerLeave={resetTilt}
         onPointerUp={resetTilt}
         onPointerCancel={resetTilt}
-        whileHover={{ y: -6, scale: 1.025 }}
-        whileTap={{ scale: 0.94 }}
-        transition={{ type: 'spring', stiffness: 380, damping: 24 }}
+        whileHover={{ y: -8, scale: 1.03 }}
+        whileTap={{ scale: 0.93 }}
+        transition={{ type: 'spring', stiffness: 380, damping: 22 }}
         style={{
           rotateX,
           rotateY,

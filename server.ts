@@ -798,6 +798,38 @@ async function startServer() {
     return res.status(201).json({ ok: true, source: 'server', memo, memos: nextMemos });
   });
 
+  app.delete('/api/memos/:id', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required to delete sales memos.' });
+    }
+    const id = req.params.id;
+    if (!id) {
+      return res.status(400).json({ ok: false, error: 'Memo ID is required.' });
+    }
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const supabase = getServerSupabase();
+    if (supabase) {
+      if (isUuid) {
+        const { error } = await supabase.from('sales_memos').delete().eq('id', id);
+        if (error) {
+          return res.status(502).json({
+            ok: false,
+            source: 'supabase',
+            error: `Failed to delete memo from Supabase: ${error.message}`,
+          });
+        }
+      }
+      return res.json({ ok: true, source: 'supabase' });
+    }
+
+    const store = readServerStore();
+    const nextMemos = store.memos.filter((m) => m.id !== id);
+    writeServerStore({ ...store, memos: nextMemos });
+    return res.json({ ok: true, source: 'server', memos: nextMemos });
+  });
+
   // Chiko Lens: Visual + Semantic Search against Full Inventory (v1beta)
   app.post('/api/gemini/visual-search', async (req: Request, res: Response) => {
     try {

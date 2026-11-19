@@ -22,6 +22,7 @@ import { WatchDetailModal } from './components/WatchDetailModal';
 import {
   ADMIN_SESSION_KEY,
   createWatchRecord,
+  deleteMemoRecord,
   deleteWatchRecord,
   fetchAdminMemos,
   fetchWatches,
@@ -443,6 +444,15 @@ function StoreApp() {
     setSavedMemos(updated);
   };
 
+  const handleDeleteMemo = async (id: string) => {
+    if (!isAdmin || !adminToken) {
+      setLoginOpen(true);
+      return;
+    }
+    const updated = await deleteMemoRecord(id, savedMemos, adminToken);
+    setSavedMemos(updated);
+  };
+
   const handleNavClick = (tab: AppTab) => {
     if ((tab === 'admin' || tab === 'memo') && !isAdmin) {
       setLoginOpen(true);
@@ -578,24 +588,32 @@ function StoreApp() {
       </motion.header>
 
       {/* Main Content Canvas */}
-      <main className="flex-1 max-w-[1400px] w-full mx-auto px-2.5 sm:px-6 pt-3 sm:pt-6 pb-24 md:pb-14 space-y-5">
+      <main
+        style={{ perspective: 1400 }}
+        className="flex-1 max-w-[1400px] w-full mx-auto px-2.5 sm:px-6 pt-3 sm:pt-6 pb-24 md:pb-14 space-y-5"
+      >
         <AnimatePresence mode="wait">
           {activeTab === 'catalog' && (
             <motion.div
               key="tab-catalog"
-              initial={{ opacity: 0, y: 16, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -12, scale: 0.98 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+              initial={{ opacity: 0, y: 24, scale: 0.96, rotateX: 8 }}
+              animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+              exit={{ opacity: 0, y: -18, scale: 0.96, rotateX: -6 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 24 }}
               className="space-y-4 sm:space-y-6"
             >
               {/* Compact Editorial Black & White Marketplace Banner with Interactive 3D Chronometer */}
-              <section className="rounded-xl sm:rounded-2xl bg-white border border-zinc-200 overflow-hidden shadow-xs">
+              <motion.section
+                initial={{ opacity: 0, y: 18, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+                className="rounded-xl sm:rounded-2xl bg-white border border-zinc-200 overflow-hidden shadow-xs"
+              >
                 <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
                   <motion.div
-                    initial={{ opacity: 0, x: -16 }}
+                    initial={{ opacity: 0, x: -24 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ type: 'spring', stiffness: 280, damping: 26 }}
+                    transition={{ type: 'spring', stiffness: 280, damping: 24, delay: 0.04 }}
                     className="lg:col-span-7 p-4 sm:p-8 flex flex-col justify-center space-y-2.5 sm:space-y-3.5"
                   >
                     <p className="text-[10px] sm:text-[11px] tracking-[0.18em] uppercase text-zinc-500 font-semibold">
@@ -614,9 +632,9 @@ function StoreApp() {
                       <motion.button
                         type="button"
                         onClick={scrollToCatalog}
-                        whileHover={{ scale: 1.03, y: -1 }}
-                        whileTap={{ scale: 0.92 }}
-                        transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+                        whileHover={{ scale: 1.05, y: -2 }}
+                        whileTap={{ scale: 0.9 }}
+                        transition={{ type: 'spring', stiffness: 440, damping: 20 }}
                         className="min-h-[38px] sm:min-h-[42px] px-4 sm:px-5 rounded-xl bg-[#09090B] text-white font-semibold text-xs sm:text-sm hover:bg-zinc-800 transition-colors whitespace-nowrap cursor-pointer shadow-sm"
                       >
                         Explore Catalog
@@ -624,9 +642,9 @@ function StoreApp() {
                       <motion.button
                         type="button"
                         onClick={() => setActiveTab('lens')}
-                        whileHover={{ scale: 1.03, y: -1 }}
-                        whileTap={{ scale: 0.92 }}
-                        transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+                        whileHover={{ scale: 1.05, y: -2 }}
+                        whileTap={{ scale: 0.9 }}
+                        transition={{ type: 'spring', stiffness: 440, damping: 20 }}
                         className="min-h-[38px] sm:min-h-[42px] px-3.5 sm:px-4 rounded-xl border border-zinc-300 bg-white text-xs sm:text-sm font-medium text-zinc-900 hover:bg-zinc-50 transition-colors flex items-center gap-1.5 sm:gap-2 whitespace-nowrap cursor-pointer"
                       >
                         <ScanSearch size={14} className="text-zinc-900" />
@@ -635,10 +653,15 @@ function StoreApp() {
                     </div>
                   </motion.div>
 
-                  <div className="lg:col-span-5 relative min-h-[165px] sm:min-h-[240px] bg-[#09090B] text-white flex flex-col items-center justify-center overflow-hidden">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9, rotateY: 14 }}
+                    animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+                    transition={{ type: 'spring', stiffness: 240, damping: 22, delay: 0.08 }}
+                    className="lg:col-span-5 relative min-h-[165px] sm:min-h-[240px] bg-[#09090B] text-white flex flex-col items-center justify-center overflow-hidden"
+                  >
                     <div
                       aria-hidden="true"
-                      className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(255,255,255,0.16),rgba(9,9,11,0)_68%)]"
+                      className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(255,255,255,0.18),rgba(9,9,11,0)_68%)]"
                     />
                     <HeroWatch3D />
                     <div className="pointer-events-none pb-2.5 text-center">
@@ -646,9 +669,9 @@ function StoreApp() {
                         Drag to rotate · Watches · Smartwatches · Earbuds · Gadgets
                       </p>
                     </div>
-                  </div>
+                  </motion.div>
                 </div>
-              </section>
+              </motion.section>
 
               {/* Instant Search, Category Tabs & Multi-Filter Toolbar */}
               <section id="catalog-collection" className="space-y-2.5 sm:space-y-3.5">
@@ -976,10 +999,10 @@ function StoreApp() {
           {activeTab === 'lens' && (
             <motion.div
               key="tab-lens"
-              initial={{ opacity: 0, y: 20, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -14, scale: 0.97 }}
-              transition={{ type: 'spring', stiffness: 290, damping: 25 }}
+              initial={{ opacity: 0, y: 26, scale: 0.94, rotateX: 10 }}
+              animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+              exit={{ opacity: 0, y: -18, scale: 0.96, rotateX: -6 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 24 }}
             >
               <ChikoLensView watches={hydratedWatches} onSelectWatch={setSelectedWatch} />
             </motion.div>
@@ -988,16 +1011,17 @@ function StoreApp() {
           {activeTab === 'memo' && isAdmin && (
             <motion.div
               key="tab-memo"
-              initial={{ opacity: 0, y: 20, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -14, scale: 0.97 }}
-              transition={{ type: 'spring', stiffness: 290, damping: 25 }}
+              initial={{ opacity: 0, y: 26, scale: 0.94, rotateX: 10 }}
+              animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+              exit={{ opacity: 0, y: -18, scale: 0.96, rotateX: -6 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 24 }}
             >
               <DigitalMemoBuilder
                 watches={hydratedWatches}
                 initialItems={draftMemoItems}
                 savedMemos={savedMemos}
                 onSaveMemo={handleSaveMemo}
+                onDeleteMemo={handleDeleteMemo}
                 onClearDraftItems={clearDraftMemoItems}
               />
             </motion.div>
@@ -1006,10 +1030,10 @@ function StoreApp() {
           {activeTab === 'admin' && isAdmin && (
             <motion.div
               key="tab-admin"
-              initial={{ opacity: 0, y: 20, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -14, scale: 0.97 }}
-              transition={{ type: 'spring', stiffness: 290, damping: 25 }}
+              initial={{ opacity: 0, y: 26, scale: 0.94, rotateX: 10 }}
+              animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+              exit={{ opacity: 0, y: -18, scale: 0.96, rotateX: -6 }}
+              transition={{ type: 'spring', stiffness: 280, damping: 24 }}
             >
               <AdminDashboard
                 watches={hydratedWatches}
@@ -1045,12 +1069,14 @@ function StoreApp() {
             <motion.button
               key="fab-lens"
               type="button"
-              initial={{ opacity: 0, scale: 0.88, y: 6 }}
+              initial={{ opacity: 0, scale: 0.72, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.88, y: 6 }}
-              transition={{ duration: 0.18 }}
+              exit={{ opacity: 0, scale: 0.72, y: 14 }}
+              whileHover={{ scale: 1.07, y: -2 }}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 22 }}
               onClick={() => setActiveTab('lens')}
-              className="min-h-[42px] px-3.5 rounded-xl bg-white/95 backdrop-blur-md border border-zinc-300 text-[#09090B] shadow-lg flex items-center gap-2 hover:border-zinc-950 transition-all active:scale-95 cursor-pointer"
+              className="min-h-[42px] px-3.5 rounded-xl bg-white/95 backdrop-blur-md border border-zinc-300 text-[#09090B] shadow-lg flex items-center gap-2 hover:border-zinc-950 transition-colors cursor-pointer"
               aria-label="Open Chiko Lens visual search"
             >
               <Camera size={16} className="text-[#09090B]" />
@@ -1064,12 +1090,14 @@ function StoreApp() {
             <motion.button
               key="fab-chat"
               type="button"
-              initial={{ opacity: 0, scale: 0.88, y: 6 }}
+              initial={{ opacity: 0, scale: 0.72, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.88, y: 6 }}
-              transition={{ duration: 0.18 }}
+              exit={{ opacity: 0, scale: 0.72, y: 14 }}
+              whileHover={{ scale: 1.07, y: -2 }}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 22 }}
               onClick={() => setChatOpen(true)}
-              className="min-h-[42px] px-3.5 rounded-xl bg-[#09090B] text-white shadow-lg flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95 cursor-pointer"
+              className="min-h-[42px] px-3.5 rounded-xl bg-[#09090B] text-white shadow-lg flex items-center gap-2 hover:bg-zinc-800 transition-colors cursor-pointer"
               aria-label="Open Smart Shop Assistant"
             >
               <MessageSquare size={16} />

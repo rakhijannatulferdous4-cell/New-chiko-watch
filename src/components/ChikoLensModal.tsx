@@ -94,9 +94,9 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
 
   return (
     <motion.section
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      initial={{ opacity: 0, y: 16, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: 'spring', stiffness: 280, damping: 24 }}
       className="space-y-6"
     >
       <div className="rounded-2xl bg-white border border-zinc-200 p-5 sm:p-7 shadow-xs">
@@ -132,18 +132,29 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Upload / Camera Dropzone */}
           <div className="lg:col-span-5 space-y-4">
-            <div className="aspect-[4/3] w-full rounded-xl bg-zinc-50 border border-dashed border-zinc-300 overflow-hidden flex items-center justify-center relative">
+            <motion.div
+              whileHover={{ scale: 1.015 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 24 }}
+              className="aspect-[4/3] w-full rounded-xl bg-zinc-50 border border-dashed border-zinc-300 overflow-hidden flex items-center justify-center relative shadow-xs"
+            >
               {previewUrl ? (
-                <img
+                <motion.img
+                  initial={{ opacity: 0, scale: 1.06 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
                   src={previewUrl}
                   alt="Uploaded product query"
                   className="w-full h-full object-cover"
                 />
               ) : (
                 <div className="text-center px-6 space-y-2">
-                  <div className="w-14 h-14 mx-auto rounded-full bg-white border border-zinc-200 flex items-center justify-center text-zinc-900 shadow-xs">
+                  <motion.div
+                    animate={{ y: [0, -4, 0] }}
+                    transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+                    className="w-14 h-14 mx-auto rounded-full bg-white border border-zinc-200 flex items-center justify-center text-zinc-900 shadow-xs"
+                  >
                     <Watch size={26} />
-                  </div>
+                  </motion.div>
                   <p className="text-sm font-semibold text-zinc-900">
                     Upload or capture a product photo
                   </p>
@@ -154,34 +165,44 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
               )}
 
               {loading && (
-                <div className="absolute inset-0 bg-white/85 backdrop-blur-xs flex flex-col items-center justify-center gap-2.5">
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="absolute inset-0 bg-white/85 backdrop-blur-xs flex flex-col items-center justify-center gap-2.5"
+                >
                   <Loader2 size={28} className="animate-spin text-zinc-900" />
                   <p className="text-xs font-medium text-zinc-900">
                     Matching against active inventory...
                   </p>
-                </div>
+                </motion.div>
               )}
-            </div>
+            </motion.div>
 
             <div className="grid grid-cols-2 gap-3">
-              <button
+              <motion.button
                 type="button"
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.93 }}
+                transition={{ type: 'spring', stiffness: 420, damping: 22 }}
                 onClick={() => cameraRef.current?.click()}
                 disabled={loading}
-                className="min-h-[46px] rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 disabled:opacity-50 transition-all active:scale-[0.98] cursor-pointer"
+                className="min-h-[46px] rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 disabled:opacity-50 transition-colors cursor-pointer shadow-xs"
               >
                 <Camera size={17} />
                 <span>Take Photo</span>
-              </button>
-              <button
+              </motion.button>
+              <motion.button
                 type="button"
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.93 }}
+                transition={{ type: 'spring', stiffness: 420, damping: 22 }}
                 onClick={() => uploadRef.current?.click()}
                 disabled={loading}
-                className="min-h-[46px] rounded-xl border border-zinc-300 bg-white text-zinc-900 font-medium text-sm flex items-center justify-center gap-2 hover:bg-zinc-50 disabled:opacity-50 transition-all active:scale-[0.98] cursor-pointer"
+                className="min-h-[46px] rounded-xl border border-zinc-300 bg-white text-zinc-900 font-medium text-sm flex items-center justify-center gap-2 hover:bg-zinc-50 disabled:opacity-50 transition-colors cursor-pointer"
               >
                 <Upload size={17} />
                 <span>Upload Image</span>
-              </button>
+              </motion.button>
             </div>
 
             {error && (
@@ -195,7 +216,12 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
           <div className="lg:col-span-7 space-y-4">
             {result ? (
               <>
-                <div className="rounded-xl bg-zinc-50 border border-zinc-200 p-4">
+                <motion.div
+                  initial={{ opacity: 0, y: 12, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 24 }}
+                  className="rounded-xl bg-zinc-50 border border-zinc-200 p-4"
+                >
                   <p className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">
                     Detected Product
                   </p>
@@ -208,7 +234,7 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
                     <span aria-hidden="true" className="text-zinc-400">·</span>
                     <span className="text-zinc-600 font-normal">{result.detectedProduct.features}</span>
                   </div>
-                </div>
+                </motion.div>
 
                 <div className="space-y-3">
                   <h3 className="text-sm font-semibold text-zinc-950">
@@ -227,15 +253,16 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
                         <motion.button
                           key={match.watchId}
                           type="button"
-                          initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          initial={{ opacity: 0, y: 18, scale: 0.94, rotateX: 14 }}
+                          animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
                           transition={{
-                            duration: 0.2,
-                            delay: Math.min(idx * 0.04, 0.18),
-                            ease: [0.16, 1, 0.3, 1],
+                            type: 'spring',
+                            stiffness: 290,
+                            damping: 22,
+                            delay: Math.min(idx * 0.06, 0.24),
                           }}
-                          whileHover={{ y: -2 }}
-                          whileTap={{ scale: 0.985 }}
+                          whileHover={{ y: -3, scale: 1.015 }}
+                          whileTap={{ scale: 0.96 }}
                           onClick={() => onSelectWatch(product)}
                           className="w-full text-left rounded-xl bg-white border border-zinc-200 hover:border-zinc-900/40 hover:shadow-md p-3 sm:p-3.5 flex items-center gap-3.5 sm:gap-4 transition-[box-shadow,border-color] cursor-pointer"
                         >

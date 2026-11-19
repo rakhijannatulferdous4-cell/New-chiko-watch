@@ -549,7 +549,11 @@ export function loadLocalMemos(): DigitalMemo[] {
     const raw = localStorage.getItem(MEMOS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((m) => ({
+      ...m,
+      items: Array.isArray(m?.items) ? m.items : [],
+    })) as DigitalMemo[];
   } catch {
     return [];
   }
@@ -565,7 +569,12 @@ export async function fetchAdminMemos(adminToken?: string): Promise<DigitalMemo[
         .order('created_at', { ascending: false })
         .limit(50);
       if (!error && Array.isArray(data)) {
-        const memos = data as DigitalMemo[];
+        const memos = data.map((m) => ({
+          ...(m as DigitalMemo),
+          items: Array.isArray((m as Record<string, unknown>)?.items)
+            ? ((m as Record<string, unknown>).items as DigitalMemo['items'])
+            : [],
+        }));
         try {
           localStorage.setItem(MEMOS_STORAGE_KEY, JSON.stringify(memos));
         } catch {
@@ -622,23 +631,38 @@ export async function saveMemoRecord(
     items: boundedItems,
   };
 
+  let persistedMemo: DigitalMemo = normalizedMemo;
   let savedToSupabase = false;
   const client = getSupabase();
   if (client) {
     try {
-      const { error } = await client.from('sales_memos').insert([
-        {
-          invoice_number: normalizedMemo.invoice_number,
-          customer_name: normalizedMemo.customer_name,
-          customer_phone: normalizedMemo.customer_phone,
-          payment_method: normalizedMemo.payment_method,
-          discount_amount: normalizedMemo.discount_amount,
-          total_amount: normalizedMemo.total_amount,
-          notes: normalizedMemo.notes,
-          items: normalizedMemo.items,
-        },
-      ]);
-      if (!error) savedToSupabase = true;
+      const { data, error } = await client
+        .from('sales_memos')
+        .insert([
+          {
+            invoice_number: normalizedMemo.invoice_number,
+            customer_name: normalizedMemo.customer_name,
+            customer_phone: normalizedMemo.customer_phone,
+            payment_method: normalizedMemo.payment_method,
+            discount_amount: normalizedMemo.discount_amount,
+            total_amount: normalizedMemo.total_amount,
+            notes: normalizedMemo.notes,
+            items: normalizedMemo.items,
+          },
+        ])
+        .select()
+        .single();
+      if (!error) {
+        savedToSupabase = true;
+        if (data && typeof (data as Record<string, unknown>).id === 'string') {
+          const row = data as Record<string, unknown>;
+          persistedMemo = {
+            ...normalizedMemo,
+            id: String(row.id),
+            created_at: toIsoString(row.created_at ?? normalizedMemo.created_at),
+          };
+        }
+      }
     } catch (err) {
       console.warn('Supabase memo insert fallback:', err);
     }
@@ -658,6 +682,13 @@ export async function saveMemoRecord(
       if (!res.ok && json?.error) {
         throw new Error(String(json.error));
       }
+      if (res.ok && json?.memo && typeof json.memo.id === 'string') {
+        persistedMemo = {
+          ...normalizedMemo,
+          id: String(json.memo.id),
+          created_at: toIsoString(json.memo.created_at ?? normalizedMemo.created_at),
+        };
+      }
     } catch (err) {
       if (
         err instanceof Error &&
@@ -669,7 +700,71 @@ export async function saveMemoRecord(
     }
   }
 
-  const next = [normalizedMemo, ...currentMemos].slice(0, 50);
+  const next = [persistedMemo, ...currentMemos.filter((m) => m.id !== persistedMemo.id)].slice(
+    0,
+    50
+  );
+  try {
+    localStorage.setItem(MEMOS_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage quota errors
+  }
+  return next;
+}
+
+export async function deleteMemoRecord(
+  id: string,
+  currentMemos: DigitalMemo[],
+  adminToken?: string
+): Promise<DigitalMemo[]> {
+  const token = adminToken || getStoredAdminToken();
+  if (!token) {
+    throw new Error('Staff login required to delete sales memos.');
+  }
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  let deletedFromCloud = false;
+  const client = getSupabase();
+  if (client) {
+    if (!isUuid) {
+      deletedFromCloud = true;
+    } else {
+      try {
+        const { error } = await client.from('sales_memos').delete().eq('id', id);
+        if (!error) {
+          deletedFromCloud = true;
+        }
+      } catch (err) {
+        console.warn('Supabase memo delete fallback:', err);
+      }
+    }
+  }
+
+  if (!deletedFromCloud) {
+    try {
+      const res = await fetch(`/api/memos/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: buildAuthHeaders(token),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        throw new Error('Staff login expired. Please sign in again to delete memos.');
+      }
+      if (!res.ok && json?.error) {
+        throw new Error(String(json.error));
+      }
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.message.includes('Staff login') || err.message.includes('Supabase'))
+      ) {
+        throw err;
+      }
+      // keep local delete fallback if offline
+    }
+  }
+
+  const next = currentMemos.filter((m) => m.id !== id);
   try {
     localStorage.setItem(MEMOS_STORAGE_KEY, JSON.stringify(next));
   } catch {
