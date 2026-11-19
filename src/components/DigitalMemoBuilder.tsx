@@ -13,7 +13,9 @@ interface DigitalMemoBuilderProps {
 }
 
 function cleanPriceInput(raw: string): string {
-  return raw.replace(/[^0-9]/g, '').replace(/^0+/, '');
+  const digits = raw.replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  return digits.replace(/^0+(?=\d)/, '');
 }
 
 function cleanQuantityInput(raw: string): string {
@@ -39,6 +41,7 @@ export function DigitalMemoBuilder({
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSavedInvoice, setLastSavedInvoice] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     if (initialItems.length > 0) {
@@ -66,8 +69,23 @@ export function DigitalMemoBuilder({
     const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(
       d.getDate()
     ).padStart(2, '0')}`;
-    return `NCE-${ymd}-${String(savedMemos.length + 101)}`;
-  }, [savedMemos.length]);
+    const prefix = `NCE-${ymd}-`;
+    const existingSet = new Set(savedMemos.map((m) => m.invoice_number));
+    let maxSeq = 100;
+    for (const m of savedMemos) {
+      if (m.invoice_number.startsWith(prefix)) {
+        const suffixNum = Number(m.invoice_number.slice(prefix.length));
+        if (Number.isFinite(suffixNum) && suffixNum > maxSeq) {
+          maxSeq = suffixNum;
+        }
+      }
+    }
+    let candidateSeq = Math.max(101, maxSeq + 1, savedMemos.length + 101);
+    while (existingSet.has(`${prefix}${candidateSeq}`)) {
+      candidateSeq += 1;
+    }
+    return `${prefix}${candidateSeq}`;
+  }, [savedMemos]);
 
   const discount = Number(discountStr) || 0;
   const subtotal = items.reduce((acc, item) => acc + item.unitPrice * item.quantity, 0);
@@ -137,6 +155,7 @@ export function DigitalMemoBuilder({
   const handleSaveMemo = async () => {
     if (items.length === 0) return;
     setSaving(true);
+    setSaveError('');
     try {
       const memo: DigitalMemo = {
         id:
@@ -155,6 +174,10 @@ export function DigitalMemoBuilder({
       };
       await onSaveMemo(memo);
       setLastSavedInvoice(invoiceNumber);
+    } catch (err) {
+      setSaveError(
+        err instanceof Error ? err.message : 'Unable to save digital memo. Please try again.'
+      );
     } finally {
       setSaving(false);
     }
@@ -486,6 +509,12 @@ export function DigitalMemoBuilder({
               <span>Print</span>
             </button>
           </div>
+
+          {saveError && (
+            <p className="text-xs font-medium text-rose-600 no-print">
+              {saveError}
+            </p>
+          )}
 
           {lastSavedInvoice && (
             <p className="text-xs font-medium text-emerald-700 no-print">

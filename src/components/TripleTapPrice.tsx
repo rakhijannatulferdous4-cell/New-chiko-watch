@@ -134,16 +134,16 @@ export function TripleTapPrice({
       {compact ? (
         <div className="space-y-0.5">
           <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
-            <span className="font-mono-num text-[15px] sm:text-base font-bold text-[#09090B] tracking-tight">
+            <span className="font-mono-num text-[13.5px] sm:text-[15px] font-bold text-[#09090B] tracking-tight">
               {formatBDT(minSellingPrice)}
             </span>
             {hasTagDiscount && (
-              <span className="font-mono-num text-[11px] text-zinc-500 line-through">
+              <span className="font-mono-num text-[10px] sm:text-[11px] text-zinc-400 line-through">
                 {formatBDT(displayBuyingPrice)}
               </span>
             )}
             {discountPct > 0 && (
-              <span className="font-mono-num text-[10px] font-semibold text-zinc-900">
+              <span className="font-mono-num text-[9.5px] sm:text-[10px] font-semibold text-zinc-900">
                 -{discountPct}%
               </span>
             )}
@@ -155,10 +155,10 @@ export function TripleTapPrice({
               onTouchStart={handleTouchStart}
               onTouchEnd={handleTouchEnd}
               onClick={handleClick}
-              className="text-left flex items-center w-full min-h-[32px] px-1 -mx-1 rounded touch-manipulation select-none cursor-pointer hover:bg-zinc-100 active:bg-zinc-200/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-900 transition-colors"
+              className="text-left flex items-center w-full min-h-[28px] px-1 -mx-1 rounded touch-manipulation select-none cursor-pointer hover:bg-zinc-100 active:bg-zinc-200/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-900 transition-colors"
               title="Tag Price (Triple-tap for real cost)"
             >
-              <span className="text-[11px] text-zinc-500">
+              <span className="text-[10px] text-zinc-500">
                 Tag:{' '}
                 <span className="font-mono-num line-through text-zinc-500">
                   {formatBDT(displayBuyingPrice)}

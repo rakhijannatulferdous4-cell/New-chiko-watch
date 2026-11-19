@@ -220,40 +220,49 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
                       Your store inventory is currently empty. Add watches or electronics in Staff Mode to see ranked matches here.
                     </p>
                   ) : (
-                    result.matches.map((match) => {
+                    result.matches.map((match, idx) => {
                       const product = watches.find((w) => w.id === match.watchId);
                       if (!product) return null;
                       return (
-                        <button
+                        <motion.button
                           key={match.watchId}
                           type="button"
+                          initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          transition={{
+                            duration: 0.2,
+                            delay: Math.min(idx * 0.04, 0.18),
+                            ease: [0.16, 1, 0.3, 1],
+                          }}
+                          whileHover={{ y: -2 }}
+                          whileTap={{ scale: 0.985 }}
                           onClick={() => onSelectWatch(product)}
-                          className="w-full text-left rounded-xl bg-white border border-zinc-200 hover:border-zinc-900/40 hover:shadow-md p-3.5 flex items-center gap-4 transition-all active:scale-[0.99] cursor-pointer"
+                          className="w-full text-left rounded-xl bg-white border border-zinc-200 hover:border-zinc-900/40 hover:shadow-md p-3 sm:p-3.5 flex items-center gap-3.5 sm:gap-4 transition-[box-shadow,border-color] cursor-pointer"
                         >
-                          <div className="w-20 h-16 rounded-lg overflow-hidden bg-zinc-100 shrink-0">
+                          <div className="w-16 h-14 sm:w-20 sm:h-16 rounded-lg overflow-hidden bg-zinc-100 shrink-0">
                             <WatchImage
                               src={product.image_url}
                               alt={product.model}
                               brand={product.brand}
                               model={product.model}
                               category={product.category}
-                              iconSize={22}
+                              iconSize={20}
                             />
                           </div>
 
                           <div className="flex-1 min-w-0 space-y-1">
                             <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-semibold text-zinc-950 truncate">
+                              <p className="text-xs sm:text-sm font-semibold text-zinc-950 truncate">
                                 {product.product_name || `${product.brand} ${product.model}`}
                               </p>
-                              <span className="font-mono-num text-xs font-bold text-zinc-950 shrink-0">
+                              <span className="font-mono-num text-[11px] sm:text-xs font-bold text-zinc-950 shrink-0">
                                 {match.matchPercentage}% Match
                               </span>
                             </div>
-                            <p className="text-xs text-zinc-600 line-clamp-2">
+                            <p className="text-[11px] sm:text-xs text-zinc-600 line-clamp-2">
                               {match.reason}
                             </p>
-                            <div className="flex items-center gap-3 pt-0.5 text-xs">
+                            <div className="flex items-center gap-3 pt-0.5 text-[11px] sm:text-xs">
                               <span className="font-mono-num font-semibold text-zinc-950">
                                 Offer: {formatBDT(product.min_selling_price)}
                               </span>
@@ -265,7 +274,7 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
                               </span>
                             </div>
                           </div>
-                        </button>
+                        </motion.button>
                       );
                     })
                   )}

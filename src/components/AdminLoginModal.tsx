@@ -38,20 +38,26 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      style={{ perspective: 1200 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="Admin Authentication"
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        initial={{ opacity: 0, scale: 0.82, y: 40, rotateX: 20, rotateY: -6 }}
+        animate={{ opacity: 1, scale: 1, y: 0, rotateX: 0, rotateY: 0 }}
+        exit={{ opacity: 0, scale: 0.86, y: 28, rotateX: 14 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 24 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md rounded-2xl bg-white border border-zinc-200 p-6 shadow-2xl space-y-5"
+        style={{ transformStyle: 'preserve-3d' }}
+        className="w-full max-w-md rounded-2xl bg-white border border-zinc-200 p-6 shadow-[0_32px_64px_-16px_rgba(9,9,11,0.45)] space-y-5 will-change-transform"
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -126,6 +132,6 @@ export function AdminLoginModal({ onClose, onSuccess }: AdminLoginModalProps) {
           </button>
         </form>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

@@ -73,7 +73,9 @@ interface NumericDrafts {
 }
 
 function sanitizePriceInput(raw: string): string {
-  return raw.replace(/[^0-9]/g, '').replace(/^0+/, '');
+  const digits = raw.replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  return digits.replace(/^0+(?=\d)/, '');
 }
 
 function sanitizeStockInput(raw: string): string {
@@ -161,13 +163,10 @@ export function AdminDashboard({
       description: product.description,
     });
     setNumericDrafts({
-      display_buying_price:
-        product.display_buying_price > 0 ? String(product.display_buying_price) : '',
-      real_buying_price:
-        product.real_buying_price > 0 ? String(product.real_buying_price) : '',
-      min_selling_price:
-        product.min_selling_price > 0 ? String(product.min_selling_price) : '',
-      stock_count: String(product.stock_count),
+      display_buying_price: String(product.display_buying_price ?? 0),
+      real_buying_price: String(product.real_buying_price ?? 0),
+      min_selling_price: String(product.min_selling_price ?? 0),
+      stock_count: String(product.stock_count ?? 0),
     });
     setUploadedBase64(null);
     setPhotoProviderLabel('');

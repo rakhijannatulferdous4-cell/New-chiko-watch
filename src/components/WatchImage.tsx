@@ -50,7 +50,7 @@ export function WatchImage({
   model,
   category,
   className = '',
-  iconSize = 36,
+  iconSize = 28,
 }: WatchImageProps) {
   const [failed, setFailed] = useState(false);
 
@@ -64,15 +64,15 @@ export function WatchImage({
         className={`relative flex flex-col items-center justify-center w-full h-full bg-gradient-to-br from-[#F8F8FA] via-[#F4F4F5] to-[#EAEAEF] text-zinc-900 select-none overflow-hidden ${className}`}
         aria-label={alt}
       >
-        <div className="relative flex flex-col items-center gap-2 px-3 text-center">
-          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border border-zinc-200 bg-white flex items-center justify-center shadow-xs">
+        <div className="relative flex flex-col items-center gap-1.5 px-2.5 text-center">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border border-zinc-200 bg-white flex items-center justify-center shadow-xs">
             {getCategoryIcon(category, iconSize)}
           </div>
           <div className="space-y-0.5">
-            <p className="text-[10px] tracking-[0.16em] uppercase text-zinc-700 font-semibold">
+            <p className="text-[9.5px] sm:text-[10px] tracking-[0.14em] uppercase text-zinc-700 font-semibold">
               {brand}
             </p>
-            <p className="text-[11px] text-zinc-500 line-clamp-1 max-w-[140px]">{model}</p>
+            <p className="text-[10px] sm:text-[11px] text-zinc-500 line-clamp-1 max-w-[120px]">{model}</p>
           </div>
         </div>
       </div>

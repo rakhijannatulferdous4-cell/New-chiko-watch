@@ -10,11 +10,12 @@ import {
   SlidersHorizontal,
   Watch,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminLoginModal } from './components/AdminLoginModal';
 import { ChikoLensView } from './components/ChikoLensModal';
 import { DigitalMemoBuilder } from './components/DigitalMemoBuilder';
+import { HeroWatch3D } from './components/HeroWatch3D';
 import { ShopChatbot } from './components/ShopChatbot';
 import { WatchCard } from './components/WatchCard';
 import { WatchDetailModal } from './components/WatchDetailModal';
@@ -95,7 +96,9 @@ class StoreErrorBoundary extends React.Component<
 export default function App() {
   return (
     <StoreErrorBoundary>
-      <StoreApp />
+      <MotionConfig reducedMotion="user">
+        <StoreApp />
+      </MotionConfig>
     </StoreErrorBoundary>
   );
 }
@@ -457,16 +460,23 @@ function StoreApp() {
   return (
     <div className="min-h-screen bg-[#FAFAFA] text-[#09090B] flex flex-col">
       {/* Top Bar (Strict 3-Zone Contract, 56px crisp white frosted bar) */}
-      <header className="sticky top-0 z-30 h-[56px] bg-white/95 backdrop-blur-md border-b border-zinc-200 no-print">
+      <motion.header
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+        className="sticky top-0 z-30 h-[56px] bg-white/95 backdrop-blur-md border-b border-zinc-200 no-print"
+      >
         <div className="max-w-[1400px] mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-8">
           {/* Zone 1: Single-element Brand Wordmark (5 rapid taps opens Admin Login) */}
-          <button
+          <motion.button
             type="button"
             onClick={handleLogoTap}
-            className="font-display text-xl sm:text-2xl font-bold tracking-tight text-[#09090B] hover:opacity-75 transition-opacity whitespace-nowrap shrink-0 select-none touch-manipulation cursor-pointer"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.94 }}
+            className="font-display text-xl sm:text-2xl font-bold tracking-tight text-[#09090B] hover:opacity-80 transition-opacity whitespace-nowrap shrink-0 select-none touch-manipulation cursor-pointer"
           >
             New Chiko Watch
-          </button>
+          </motion.button>
 
           {/* Zone 2: Desktop Single-Line Navigation Links */}
           <nav
@@ -476,48 +486,76 @@ function StoreApp() {
             <button
               type="button"
               onClick={() => handleNavClick('catalog')}
-              className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+              className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 activeTab === 'catalog'
-                  ? 'text-[#09090B] font-semibold border-b-2 border-[#09090B]'
+                  ? 'text-[#09090B] font-semibold'
                   : 'text-zinc-500 hover:text-[#09090B]'
               }`}
             >
               Catalog
+              {activeTab === 'catalog' && (
+                <motion.span
+                  layoutId="desktop-nav-underline"
+                  transition={{ type: 'spring', stiffness: 460, damping: 36 }}
+                  className="absolute left-0 right-0 bottom-0 h-[2px] bg-[#09090B] rounded-full"
+                />
+              )}
             </button>
             <button
               type="button"
               onClick={() => handleNavClick('lens')}
-              className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+              className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 activeTab === 'lens'
-                  ? 'text-[#09090B] font-semibold border-b-2 border-[#09090B]'
+                  ? 'text-[#09090B] font-semibold'
                   : 'text-zinc-500 hover:text-[#09090B]'
               }`}
             >
               Chiko Lens
+              {activeTab === 'lens' && (
+                <motion.span
+                  layoutId="desktop-nav-underline"
+                  transition={{ type: 'spring', stiffness: 460, damping: 36 }}
+                  className="absolute left-0 right-0 bottom-0 h-[2px] bg-[#09090B] rounded-full"
+                />
+              )}
             </button>
             {isAdmin && (
               <>
                 <button
                   type="button"
                   onClick={() => handleNavClick('memo')}
-                  className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                     activeTab === 'memo'
-                      ? 'text-[#09090B] font-semibold border-b-2 border-[#09090B]'
+                      ? 'text-[#09090B] font-semibold'
                       : 'text-zinc-500 hover:text-[#09090B]'
                   }`}
                 >
                   Digital Memo
+                  {activeTab === 'memo' && (
+                    <motion.span
+                      layoutId="desktop-nav-underline"
+                      transition={{ type: 'spring', stiffness: 460, damping: 36 }}
+                      className="absolute left-0 right-0 bottom-0 h-[2px] bg-[#09090B] rounded-full"
+                    />
+                  )}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleNavClick('admin')}
-                  className={`py-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                     activeTab === 'admin'
-                      ? 'text-[#09090B] font-semibold border-b-2 border-[#09090B]'
+                      ? 'text-[#09090B] font-semibold'
                       : 'text-zinc-500 hover:text-[#09090B]'
                   }`}
                 >
                   Inventory
+                  {activeTab === 'admin' && (
+                    <motion.span
+                      layoutId="desktop-nav-underline"
+                      transition={{ type: 'spring', stiffness: 460, damping: 36 }}
+                      className="absolute left-0 right-0 bottom-0 h-[2px] bg-[#09090B] rounded-full"
+                    />
+                  )}
                 </button>
               </>
             )}
@@ -525,321 +563,471 @@ function StoreApp() {
 
           {/* Zone 3: Single Primary Action */}
           <div className="flex items-center shrink-0">
-            <button
+            <motion.button
               type="button"
               onClick={() => setChatOpen((v) => !v)}
-              className="min-h-[38px] px-4 rounded-lg bg-[#09090B] text-white text-xs font-semibold hover:bg-zinc-800 transition-all active:scale-95 whitespace-nowrap shrink-0 cursor-pointer"
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+              className="min-h-[38px] px-4 rounded-lg bg-[#09090B] text-white text-xs font-semibold hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
             >
               Ask Concierge
-            </button>
+            </motion.button>
           </div>
         </div>
-      </header>
+      </motion.header>
 
       {/* Main Content Canvas */}
-      <main className="flex-1 max-w-[1400px] w-full mx-auto px-3 sm:px-6 pt-4 sm:pt-6 pb-24 md:pb-14 space-y-6">
-        {activeTab === 'catalog' && (
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            className="space-y-6"
-          >
-            {/* Compact Editorial Black & White Marketplace Banner */}
-            <section className="rounded-2xl bg-white border border-zinc-200 overflow-hidden shadow-xs">
-              <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
-                <div className="lg:col-span-8 p-5 sm:p-8 flex flex-col justify-center space-y-3.5">
-                  <p className="text-[11px] tracking-[0.2em] uppercase text-zinc-500 font-semibold">
-                    Watches &amp; Electronics Marketplace
-                  </p>
-                  <h1
-                    className="font-display font-bold text-[#09090B] leading-[1.06] text-balance max-w-2xl"
-                    style={{ fontSize: 'clamp(1.85rem, 3.4vw, 3rem)' }}
+      <main className="flex-1 max-w-[1400px] w-full mx-auto px-2.5 sm:px-6 pt-3 sm:pt-6 pb-24 md:pb-14 space-y-5">
+        <AnimatePresence mode="wait">
+          {activeTab === 'catalog' && (
+            <motion.div
+              key="tab-catalog"
+              initial={{ opacity: 0, y: 16, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.98 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+              className="space-y-4 sm:space-y-6"
+            >
+              {/* Compact Editorial Black & White Marketplace Banner with Interactive 3D Chronometer */}
+              <section className="rounded-xl sm:rounded-2xl bg-white border border-zinc-200 overflow-hidden shadow-xs">
+                <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
+                  <motion.div
+                    initial={{ opacity: 0, x: -16 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ type: 'spring', stiffness: 280, damping: 26 }}
+                    className="lg:col-span-7 p-4 sm:p-8 flex flex-col justify-center space-y-2.5 sm:space-y-3.5"
                   >
-                    Signature Timepieces &amp; Smart Electronics Under One Roof
-                  </h1>
-                  <p className="text-xs sm:text-sm text-zinc-600 max-w-xl leading-relaxed">
-                    Discover authentic Analog &amp; Digital Watches, Smartwatches, TWS Earbuds, Power Banks, Chargers, and Speakers with transparent offer pricing and AI visual search.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={scrollToCatalog}
-                      className="min-h-[42px] px-5 rounded-xl bg-[#09090B] text-white font-semibold text-xs sm:text-sm hover:bg-zinc-800 transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+                    <p className="text-[10px] sm:text-[11px] tracking-[0.18em] uppercase text-zinc-500 font-semibold">
+                      Watches &amp; Electronics Marketplace
+                    </p>
+                    <h1
+                      className="font-display font-bold text-[#09090B] leading-[1.08] text-balance max-w-2xl"
+                      style={{ fontSize: 'clamp(1.5rem, 3.2vw, 3rem)' }}
                     >
-                      Explore Catalog
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('lens')}
-                      className="min-h-[42px] px-4 rounded-xl border border-zinc-300 bg-white text-xs sm:text-sm font-medium text-zinc-900 hover:bg-zinc-50 transition-all active:scale-95 flex items-center gap-2 whitespace-nowrap cursor-pointer"
-                    >
-                      <ScanSearch size={15} className="text-zinc-900" />
-                      <span>Search by Photo</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="lg:col-span-4 relative min-h-[160px] sm:min-h-[200px] bg-[#09090B] text-white flex flex-col items-center justify-center p-6 text-center">
-                  <div className="flex flex-col items-center gap-2.5">
-                    <div className="w-16 h-16 rounded-full border border-white/25 bg-white/5 flex items-center justify-center">
-                      <Watch size={32} strokeWidth={1.35} className="text-white" />
+                      Signature Timepieces &amp; Smart Electronics Under One Roof
+                    </h1>
+                    <p className="text-[11.5px] sm:text-sm text-zinc-600 max-w-xl leading-relaxed">
+                      Discover authentic Analog &amp; Digital Watches, Smartwatches, TWS Earbuds, Power Banks, Chargers, and Speakers with transparent offer pricing and AI visual search.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5 sm:pt-1">
+                      <motion.button
+                        type="button"
+                        onClick={scrollToCatalog}
+                        whileHover={{ scale: 1.03, y: -1 }}
+                        whileTap={{ scale: 0.92 }}
+                        transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+                        className="min-h-[38px] sm:min-h-[42px] px-4 sm:px-5 rounded-xl bg-[#09090B] text-white font-semibold text-xs sm:text-sm hover:bg-zinc-800 transition-colors whitespace-nowrap cursor-pointer shadow-sm"
+                      >
+                        Explore Catalog
+                      </motion.button>
+                      <motion.button
+                        type="button"
+                        onClick={() => setActiveTab('lens')}
+                        whileHover={{ scale: 1.03, y: -1 }}
+                        whileTap={{ scale: 0.92 }}
+                        transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+                        className="min-h-[38px] sm:min-h-[42px] px-3.5 sm:px-4 rounded-xl border border-zinc-300 bg-white text-xs sm:text-sm font-medium text-zinc-900 hover:bg-zinc-50 transition-colors flex items-center gap-1.5 sm:gap-2 whitespace-nowrap cursor-pointer"
+                      >
+                        <ScanSearch size={14} className="text-zinc-900" />
+                        <span>Search by Photo</span>
+                      </motion.button>
                     </div>
-                    <p className="font-display text-lg text-white tracking-wide">
-                      New Chiko Watch &amp; Electronics
-                    </p>
-                    <p className="text-[11px] text-zinc-400">
-                      Watches · Smartwatches · Earbuds · Power Banks · Gadgets
-                    </p>
+                  </motion.div>
+
+                  <div className="lg:col-span-5 relative min-h-[165px] sm:min-h-[240px] bg-[#09090B] text-white flex flex-col items-center justify-center overflow-hidden">
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(255,255,255,0.16),rgba(9,9,11,0)_68%)]"
+                    />
+                    <HeroWatch3D />
+                    <div className="pointer-events-none pb-2.5 text-center">
+                      <p className="text-[10px] sm:text-[11px] text-zinc-400 tracking-wide">
+                        Drag to rotate · Watches · Smartwatches · Earbuds · Gadgets
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </section>
+              </section>
 
-            {/* Instant Search, Category Tabs & Multi-Filter Toolbar */}
-            <section id="catalog-collection" className="space-y-3.5">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#09090B]">
-                    Store Collection
-                  </h2>
-                  <p className="text-xs text-zinc-500 mt-0.5 font-mono-num">
-                    Showing {filteredWatches.length} of {hydratedWatches.length} products
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  <div className="relative flex-1 md:w-80">
-                    <Search
-                      size={16}
-                      className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400"
-                    />
-                    <input
-                      type="search"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search watch, Casio, earbuds, charger..."
-                      className="w-full min-h-[42px] rounded-xl bg-white border border-zinc-300 pl-10 pr-3.5 text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:border-zinc-950 transition-colors"
-                    />
+              {/* Instant Search, Category Tabs & Multi-Filter Toolbar */}
+              <section id="catalog-collection" className="space-y-2.5 sm:space-y-3.5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-3">
+                  <div>
+                    <h2 className="font-display text-xl sm:text-3xl font-bold text-[#09090B]">
+                      Store Collection
+                    </h2>
+                    <p className="text-[11px] sm:text-xs text-zinc-500 mt-0.5 font-mono-num">
+                      Showing {filteredWatches.length} of {hydratedWatches.length} products
+                    </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowFiltersMobile((v) => !v)}
-                    className="md:hidden min-h-[42px] min-w-[44px] px-3 rounded-xl bg-white border border-zinc-300 text-zinc-900 flex items-center justify-center gap-1.5 text-xs font-semibold cursor-pointer"
-                    aria-label="Toggle filters"
-                  >
-                    <SlidersHorizontal size={15} />
-                    <span>Filter</span>
-                  </button>
-                </div>
-              </div>
 
-              {/* Daraz/Alibaba-inspired Horizontal Category Quick Tabs */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                <button
-                  type="button"
-                  onClick={() => setCategoryFilter('All')}
-                  className={`min-h-[34px] px-3 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all active:scale-95 cursor-pointer ${
-                    categoryFilter === 'All'
-                      ? 'bg-[#09090B] text-white'
-                      : 'bg-white border border-zinc-200 text-zinc-700 hover:border-zinc-400'
-                  }`}
-                >
-                  All Items
-                </button>
-                {STORE_CATEGORIES.map((cat) => (
-                  <button
-                    key={cat}
+                  <div className="flex items-center gap-2 w-full md:w-auto">
+                    <div className="relative flex-1 md:w-80">
+                      <Search
+                        size={15}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
+                      />
+                      <input
+                        type="search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search watch, Casio, earbuds, charger..."
+                        className="w-full min-h-[38px] sm:min-h-[42px] rounded-xl bg-white border border-zinc-300 pl-9 pr-3 text-xs sm:text-sm text-[#09090B] placeholder:text-zinc-400 focus:outline-none focus:border-zinc-950 transition-colors"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowFiltersMobile((v) => !v)}
+                      className={`md:hidden min-h-[38px] min-w-[44px] px-3 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-semibold transition-all active:scale-95 cursor-pointer ${
+                        showFiltersMobile
+                          ? 'bg-[#09090B] border-[#09090B] text-white'
+                          : 'bg-white border-zinc-300 text-zinc-900'
+                      }`}
+                      aria-label="Toggle filters"
+                    >
+                      <SlidersHorizontal size={14} />
+                      <span>Filter</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Daraz/Alibaba-inspired Horizontal Category Quick Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                  <motion.button
                     type="button"
-                    onClick={() => setCategoryFilter(cat)}
-                    className={`min-h-[34px] px-3 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all active:scale-95 cursor-pointer ${
-                      categoryFilter === cat
-                        ? 'bg-[#09090B] text-white'
+                    onClick={() => setCategoryFilter('All')}
+                    whileTap={{ scale: 0.9 }}
+                    transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+                    className={`relative min-h-[30px] sm:min-h-[34px] px-2.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                      categoryFilter === 'All'
+                        ? 'text-white'
                         : 'bg-white border border-zinc-200 text-zinc-700 hover:border-zinc-400'
                     }`}
                   >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-
-              {/* Detailed Filter Controls */}
-              <div
-                className={`${
-                  showFiltersMobile ? 'grid' : 'hidden md:grid'
-                } grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 rounded-xl bg-white border border-zinc-200 p-3`}
-              >
-                <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-zinc-500">Brand</label>
-                  <select
-                    value={brandFilter}
-                    onChange={(e) => setBrandFilter(e.target.value)}
-                    className="w-full min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
-                  >
-                    {brands.map((b) => (
-                      <option key={b} value={b}>
-                        {b === 'All' ? 'All Brands' : b}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-zinc-500">Category</label>
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) =>
-                      setCategoryFilter(e.target.value as 'All' | ProductCategory)
-                    }
-                    className="w-full min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
-                  >
-                    <option value="All">All Categories</option>
-                    {STORE_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-zinc-500">Price Range</label>
-                  <select
-                    value={priceFilter}
-                    onChange={(e) => setPriceFilter(e.target.value as PriceRangeFilter)}
-                    className="w-full min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
-                  >
-                    <option value="all">All Prices</option>
-                    <option value="under2000">Under ৳2,000</option>
-                    <option value="2000to15000">৳2,000 – ৳15,000</option>
-                    <option value="above15000">৳15,000+</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[11px] font-medium text-zinc-500">Stock Status</label>
-                  <div className="flex gap-2">
-                    <select
-                      value={stockFilter}
-                      onChange={(e) => setStockFilter(e.target.value as StockFilter)}
-                      className="flex-1 min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
+                    {categoryFilter === 'All' && (
+                      <motion.span
+                        layoutId="category-active-bg"
+                        transition={{ type: 'spring', stiffness: 420, damping: 25 }}
+                        className="absolute inset-0 rounded-lg bg-[#09090B] shadow-xs"
+                      />
+                    )}
+                    <span className="relative z-10">All Items</span>
+                  </motion.button>
+                  {STORE_CATEGORIES.map((cat) => (
+                    <motion.button
+                      key={cat}
+                      type="button"
+                      onClick={() => setCategoryFilter(cat)}
+                      whileTap={{ scale: 0.9 }}
+                      transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+                      className={`relative min-h-[30px] sm:min-h-[34px] px-2.5 sm:px-3 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                        categoryFilter === cat
+                          ? 'text-white'
+                          : 'bg-white border border-zinc-200 text-zinc-700 hover:border-zinc-400'
+                      }`}
                     >
-                      <option value="all">All Stock</option>
-                      <option value="inStock">In Stock Only</option>
-                      <option value="outOfStock">Out of Stock</option>
+                      {categoryFilter === cat && (
+                        <motion.span
+                          layoutId="category-active-bg"
+                          transition={{ type: 'spring', stiffness: 420, damping: 25 }}
+                          className="absolute inset-0 rounded-lg bg-[#09090B] shadow-xs"
+                        />
+                      )}
+                      <span className="relative z-10">{cat}</span>
+                    </motion.button>
+                  ))}
+                </div>
+
+                {/* Animated Mobile Filter Drawer */}
+                <AnimatePresence initial={false}>
+                  {showFiltersMobile && (
+                    <motion.div
+                      key="mobile-filters"
+                      initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                      className="md:hidden grid grid-cols-2 gap-2.5 rounded-xl bg-white border border-zinc-200 p-2.5 shadow-xs"
+                    >
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-medium text-zinc-500">Brand</label>
+                        <select
+                          value={brandFilter}
+                          onChange={(e) => setBrandFilter(e.target.value)}
+                          className="w-full min-h-[36px] rounded-lg bg-zinc-50 border border-zinc-200 px-2.5 text-[11px] text-[#09090B] focus:outline-none focus:border-zinc-950"
+                        >
+                          {brands.map((b) => (
+                            <option key={b} value={b}>
+                              {b === 'All' ? 'All Brands' : b}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-medium text-zinc-500">Category</label>
+                        <select
+                          value={categoryFilter}
+                          onChange={(e) =>
+                            setCategoryFilter(e.target.value as 'All' | ProductCategory)
+                          }
+                          className="w-full min-h-[36px] rounded-lg bg-zinc-50 border border-zinc-200 px-2.5 text-[11px] text-[#09090B] focus:outline-none focus:border-zinc-950"
+                        >
+                          <option value="All">All Categories</option>
+                          {STORE_CATEGORIES.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-medium text-zinc-500">Price Range</label>
+                        <select
+                          value={priceFilter}
+                          onChange={(e) => setPriceFilter(e.target.value as PriceRangeFilter)}
+                          className="w-full min-h-[36px] rounded-lg bg-zinc-50 border border-zinc-200 px-2.5 text-[11px] text-[#09090B] focus:outline-none focus:border-zinc-950"
+                        >
+                          <option value="all">All Prices</option>
+                          <option value="under2000">Under ৳2,000</option>
+                          <option value="2000to15000">৳2,000 – ৳15,000</option>
+                          <option value="above15000">৳15,000+</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-medium text-zinc-500">Stock Status</label>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={stockFilter}
+                            onChange={(e) => setStockFilter(e.target.value as StockFilter)}
+                            className="flex-1 min-h-[36px] rounded-lg bg-zinc-50 border border-zinc-200 px-2 text-[11px] text-[#09090B] focus:outline-none focus:border-zinc-950"
+                          >
+                            <option value="all">All Stock</option>
+                            <option value="inStock">In Stock</option>
+                            <option value="outOfStock">Out of Stock</option>
+                          </select>
+                          {hasActiveFilters && (
+                            <button
+                              type="button"
+                              onClick={resetFilters}
+                              className="min-h-[36px] px-2 rounded-lg border border-zinc-300 bg-white text-[11px] font-medium text-zinc-900 active:scale-95 transition-transform flex items-center justify-center shrink-0 cursor-pointer"
+                              title="Reset filters"
+                              aria-label="Reset filters"
+                            >
+                              <RotateCcw size={12} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Desktop Filter Controls */}
+                <div className="hidden md:grid grid-cols-4 gap-3 rounded-xl bg-white border border-zinc-200 p-3">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-zinc-500">Brand</label>
+                    <select
+                      value={brandFilter}
+                      onChange={(e) => setBrandFilter(e.target.value)}
+                      className="w-full min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
+                    >
+                      {brands.map((b) => (
+                        <option key={b} value={b}>
+                          {b === 'All' ? 'All Brands' : b}
+                        </option>
+                      ))}
                     </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-zinc-500">Category</label>
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) =>
+                        setCategoryFilter(e.target.value as 'All' | ProductCategory)
+                      }
+                      className="w-full min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
+                    >
+                      <option value="All">All Categories</option>
+                      {STORE_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-zinc-500">Price Range</label>
+                    <select
+                      value={priceFilter}
+                      onChange={(e) => setPriceFilter(e.target.value as PriceRangeFilter)}
+                      className="w-full min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
+                    >
+                      <option value="all">All Prices</option>
+                      <option value="under2000">Under ৳2,000</option>
+                      <option value="2000to15000">৳2,000 – ৳15,000</option>
+                      <option value="above15000">৳15,000+</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-medium text-zinc-500">Stock Status</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={stockFilter}
+                        onChange={(e) => setStockFilter(e.target.value as StockFilter)}
+                        className="flex-1 min-h-[40px] rounded-lg bg-zinc-50 border border-zinc-200 px-3 text-xs text-[#09090B] focus:outline-none focus:border-zinc-950"
+                      >
+                        <option value="all">All Stock</option>
+                        <option value="inStock">In Stock Only</option>
+                        <option value="outOfStock">Out of Stock</option>
+                      </select>
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={resetFilters}
+                          className="min-h-[40px] px-3 rounded-lg border border-zinc-300 bg-white text-xs font-medium text-zinc-900 hover:bg-zinc-50 flex items-center gap-1 shrink-0 active:scale-95 transition-all cursor-pointer"
+                          title="Reset filters"
+                        >
+                          <RotateCcw size={13} />
+                          <span>Reset</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Compact Multi-Column Marketplace Product Grid (2 cols mobile, 3-5 cols desktop) */}
+                {loading ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3.5">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                      <div
+                        key={n}
+                        className="h-56 sm:h-64 rounded-xl bg-white border border-zinc-200 animate-pulse"
+                      />
+                    ))}
+                  </div>
+                ) : hydratedWatches.length === 0 ? (
+                  <div className="rounded-2xl bg-white border border-zinc-200 py-14 px-6 text-center space-y-4 shadow-xs">
+                    <div className="w-14 h-14 mx-auto rounded-full bg-zinc-100 border border-zinc-200 flex items-center justify-center text-zinc-900">
+                      <Watch size={26} strokeWidth={1.5} />
+                    </div>
+                    <p className="text-sm sm:text-base font-medium text-[#09090B]">
+                      No watches or electronics added yet. Tap Staff to add your first item.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleNavClick('admin')}
+                      className="min-h-[44px] px-5 rounded-xl bg-[#09090B] text-white text-xs font-semibold hover:bg-zinc-800 transition-colors cursor-pointer"
+                    >
+                      {isAdmin ? 'Open Inventory' : 'Staff Login'}
+                    </button>
+                  </div>
+                ) : filteredWatches.length === 0 ? (
+                  <div className="rounded-2xl bg-white border border-zinc-200 py-12 px-6 text-center space-y-3 shadow-xs">
+                    <Watch size={32} className="mx-auto text-zinc-400" />
+                    <h3 className="text-base font-semibold text-[#09090B]">
+                      No matching products found
+                    </h3>
+                    <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+                      Try adjusting your brand, category, or price range filter, or ask our Concierge for a recommendation.
+                    </p>
                     {hasActiveFilters && (
                       <button
                         type="button"
                         onClick={resetFilters}
-                        className="min-h-[40px] px-3 rounded-lg border border-zinc-300 bg-white text-xs font-medium text-zinc-900 hover:bg-zinc-50 flex items-center gap-1 shrink-0 cursor-pointer"
-                        title="Reset filters"
+                        className="min-h-[40px] px-4 rounded-xl bg-[#09090B] text-white text-xs font-semibold active:scale-95 transition-transform cursor-pointer"
                       >
-                        <RotateCcw size={13} />
-                        <span>Reset</span>
+                        Clear All Filters
                       </button>
                     )}
                   </div>
-                </div>
-              </div>
-
-              {/* Compact Multi-Column Marketplace Product Grid (2 cols mobile, 3-5 cols desktop) */}
-              {loading ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-                    <div
-                      key={n}
-                      className="h-64 rounded-xl bg-white border border-zinc-200 animate-pulse"
-                    />
-                  ))}
-                </div>
-              ) : hydratedWatches.length === 0 ? (
-                <div className="rounded-2xl bg-white border border-zinc-200 py-14 px-6 text-center space-y-4 shadow-xs">
-                  <div className="w-14 h-14 mx-auto rounded-full bg-zinc-100 border border-zinc-200 flex items-center justify-center text-zinc-900">
-                    <Watch size={26} strokeWidth={1.5} />
-                  </div>
-                  <p className="text-sm sm:text-base font-medium text-[#09090B]">
-                    No watches or electronics added yet. Tap Staff to add your first item.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => handleNavClick('admin')}
-                    className="min-h-[44px] px-5 rounded-xl bg-[#09090B] text-white text-xs font-semibold hover:bg-zinc-800 transition-colors cursor-pointer"
+                ) : (
+                  <div
+                    key={`${categoryFilter}-${brandFilter}-${priceFilter}-${stockFilter}`}
+                    className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3.5"
                   >
-                    {isAdmin ? 'Open Inventory' : 'Staff Login'}
-                  </button>
-                </div>
-              ) : filteredWatches.length === 0 ? (
-                <div className="rounded-2xl bg-white border border-zinc-200 py-12 px-6 text-center space-y-3 shadow-xs">
-                  <Watch size={32} className="mx-auto text-zinc-400" />
-                  <h3 className="text-base font-semibold text-[#09090B]">
-                    No matching products found
-                  </h3>
-                  <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                    Try adjusting your brand, category, or price range filter, or ask our Concierge for a recommendation.
-                  </p>
-                  {hasActiveFilters && (
-                    <button
-                      type="button"
-                      onClick={resetFilters}
-                      className="min-h-[40px] px-4 rounded-xl bg-[#09090B] text-white text-xs font-semibold cursor-pointer"
-                    >
-                      Clear All Filters
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
-                  {filteredWatches.map((watch) => (
-                    <WatchCard
-                      key={watch.id}
-                      watch={watch}
-                      isAdmin={isAdmin}
-                      onSelect={setSelectedWatch}
-                      onAdjustStock={handleAdjustStock}
-                      onEdit={(w) => {
-                        setWatchToEdit(w);
-                        setActiveTab('admin');
-                      }}
-                      onDelete={handleDeleteWatch}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-          </motion.div>
-        )}
+                    {filteredWatches.map((watch, idx) => (
+                      <WatchCard
+                        key={watch.id}
+                        watch={watch}
+                        index={idx}
+                        isAdmin={isAdmin}
+                        onSelect={setSelectedWatch}
+                        onAdjustStock={handleAdjustStock}
+                        onEdit={(w) => {
+                          setWatchToEdit(w);
+                          setActiveTab('admin');
+                        }}
+                        onDelete={handleDeleteWatch}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            </motion.div>
+          )}
 
-        {activeTab === 'lens' && (
-          <ChikoLensView watches={hydratedWatches} onSelectWatch={setSelectedWatch} />
-        )}
+          {activeTab === 'lens' && (
+            <motion.div
+              key="tab-lens"
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -14, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 290, damping: 25 }}
+            >
+              <ChikoLensView watches={hydratedWatches} onSelectWatch={setSelectedWatch} />
+            </motion.div>
+          )}
 
-        {activeTab === 'memo' && isAdmin && (
-          <DigitalMemoBuilder
-            watches={hydratedWatches}
-            initialItems={draftMemoItems}
-            savedMemos={savedMemos}
-            onSaveMemo={handleSaveMemo}
-            onClearDraftItems={clearDraftMemoItems}
-          />
-        )}
+          {activeTab === 'memo' && isAdmin && (
+            <motion.div
+              key="tab-memo"
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -14, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 290, damping: 25 }}
+            >
+              <DigitalMemoBuilder
+                watches={hydratedWatches}
+                initialItems={draftMemoItems}
+                savedMemos={savedMemos}
+                onSaveMemo={handleSaveMemo}
+                onClearDraftItems={clearDraftMemoItems}
+              />
+            </motion.div>
+          )}
 
-        {activeTab === 'admin' && isAdmin && (
-          <AdminDashboard
-            watches={hydratedWatches}
-            adminUsername={adminUsername}
-            storageSource={storageSource}
-            cloudNotice={cloudNotice}
-            cloudError={cloudError}
-            initialEditWatch={watchToEdit}
-            onClearInitialEdit={() => setWatchToEdit(null)}
-            onLogout={handleAdminLogout}
-            onCreateWatch={handleCreateWatch}
-            onUpdateWatch={handleUpdateWatch}
-            onDeleteWatch={handleDeleteWatch}
-            onAdjustStock={handleAdjustStock}
-          />
-        )}
+          {activeTab === 'admin' && isAdmin && (
+            <motion.div
+              key="tab-admin"
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -14, scale: 0.97 }}
+              transition={{ type: 'spring', stiffness: 290, damping: 25 }}
+            >
+              <AdminDashboard
+                watches={hydratedWatches}
+                adminUsername={adminUsername}
+                storageSource={storageSource}
+                cloudNotice={cloudNotice}
+                cloudError={cloudError}
+                initialEditWatch={watchToEdit}
+                onClearInitialEdit={() => setWatchToEdit(null)}
+                onLogout={handleAdminLogout}
+                onCreateWatch={handleCreateWatch}
+                onUpdateWatch={handleUpdateWatch}
+                onDeleteWatch={handleDeleteWatch}
+                onAdjustStock={handleAdjustStock}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
       {/* Quiet Boutique Footer */}
@@ -851,30 +1039,44 @@ function StoreApp() {
       </footer>
 
       {/* Floating Chiko Lens & AI Concierge Triggers */}
-      <div className="fixed bottom-[74px] md:bottom-6 right-4 z-40 flex flex-col gap-2 no-print">
-        {activeTab !== 'lens' && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('lens')}
-            className="min-h-[44px] px-3.5 rounded-xl bg-white/95 backdrop-blur-md border border-zinc-300 text-[#09090B] shadow-lg flex items-center gap-2 hover:border-zinc-950 transition-all active:scale-95 cursor-pointer"
-            aria-label="Open Chiko Lens visual search"
-          >
-            <Camera size={17} className="text-[#09090B]" />
-            <span className="text-xs font-semibold hidden sm:inline">Chiko Lens</span>
-          </button>
-        )}
+      <div className="fixed bottom-[70px] md:bottom-6 right-3.5 sm:right-4 z-40 flex flex-col gap-2 no-print">
+        <AnimatePresence>
+          {activeTab !== 'lens' && (
+            <motion.button
+              key="fab-lens"
+              type="button"
+              initial={{ opacity: 0, scale: 0.88, y: 6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.88, y: 6 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => setActiveTab('lens')}
+              className="min-h-[42px] px-3.5 rounded-xl bg-white/95 backdrop-blur-md border border-zinc-300 text-[#09090B] shadow-lg flex items-center gap-2 hover:border-zinc-950 transition-all active:scale-95 cursor-pointer"
+              aria-label="Open Chiko Lens visual search"
+            >
+              <Camera size={16} className="text-[#09090B]" />
+              <span className="text-xs font-semibold hidden sm:inline">Chiko Lens</span>
+            </motion.button>
+          )}
+        </AnimatePresence>
 
-        {!chatOpen && (
-          <button
-            type="button"
-            onClick={() => setChatOpen(true)}
-            className="min-h-[44px] px-3.5 rounded-xl bg-[#09090B] text-white shadow-lg flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95 cursor-pointer"
-            aria-label="Open Smart Shop Assistant"
-          >
-            <MessageSquare size={17} />
-            <span className="text-xs font-semibold hidden sm:inline">Assistant</span>
-          </button>
-        )}
+        <AnimatePresence>
+          {!chatOpen && (
+            <motion.button
+              key="fab-chat"
+              type="button"
+              initial={{ opacity: 0, scale: 0.88, y: 6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.88, y: 6 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => setChatOpen(true)}
+              className="min-h-[42px] px-3.5 rounded-xl bg-[#09090B] text-white shadow-lg flex items-center gap-2 hover:bg-zinc-800 transition-all active:scale-95 cursor-pointer"
+              aria-label="Open Smart Shop Assistant"
+            >
+              <MessageSquare size={16} />
+              <span className="text-xs font-semibold hidden sm:inline">Assistant</span>
+            </motion.button>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Mobile-First Bottom Navigation Bar */}
@@ -884,45 +1086,89 @@ function StoreApp() {
         } items-center no-print`}
         aria-label="Mobile bottom navigation"
       >
-        <button
+        <motion.button
           type="button"
           onClick={() => handleNavClick('catalog')}
-          className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
+          whileTap={{ scale: 0.86 }}
+          transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+          className={`relative h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
             activeTab === 'catalog' ? 'text-[#09090B] font-semibold' : 'text-zinc-500'
           }`}
         >
-          <Watch size={19} />
+          {activeTab === 'catalog' && (
+            <motion.span
+              layoutId="mobile-nav-indicator"
+              transition={{ type: 'spring', stiffness: 420, damping: 26 }}
+              className="absolute top-0 left-1/5 right-1/5 h-[3px] bg-[#09090B] rounded-b-full"
+            />
+          )}
+          <Watch
+            size={18}
+            className={`transition-transform duration-200 ${
+              activeTab === 'catalog' ? 'scale-120 -translate-y-0.5' : 'scale-100'
+            }`}
+          />
           <span className="text-[10px] tracking-tight">Catalog</span>
-        </button>
+        </motion.button>
 
-        <button
+        <motion.button
           type="button"
           onClick={() => handleNavClick('lens')}
-          className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
+          whileTap={{ scale: 0.86 }}
+          transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+          className={`relative h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
             activeTab === 'lens' ? 'text-[#09090B] font-semibold' : 'text-zinc-500'
           }`}
         >
-          <ScanSearch size={19} />
+          {activeTab === 'lens' && (
+            <motion.span
+              layoutId="mobile-nav-indicator"
+              transition={{ type: 'spring', stiffness: 420, damping: 26 }}
+              className="absolute top-0 left-1/5 right-1/5 h-[3px] bg-[#09090B] rounded-b-full"
+            />
+          )}
+          <ScanSearch
+            size={18}
+            className={`transition-transform duration-200 ${
+              activeTab === 'lens' ? 'scale-120 -translate-y-0.5' : 'scale-100'
+            }`}
+          />
           <span className="text-[10px] tracking-tight">Lens</span>
-        </button>
+        </motion.button>
 
         {isAdmin && (
-          <button
+          <motion.button
             type="button"
             onClick={() => handleNavClick('memo')}
-            className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
+            whileTap={{ scale: 0.86 }}
+            transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+            className={`relative h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
               activeTab === 'memo' ? 'text-[#09090B] font-semibold' : 'text-zinc-500'
             }`}
           >
-            <ReceiptText size={19} />
+            {activeTab === 'memo' && (
+              <motion.span
+                layoutId="mobile-nav-indicator"
+                transition={{ type: 'spring', stiffness: 420, damping: 26 }}
+                className="absolute top-0 left-1/5 right-1/5 h-[3px] bg-[#09090B] rounded-b-full"
+              />
+            )}
+            <ReceiptText
+              size={18}
+              className={`transition-transform duration-200 ${
+                activeTab === 'memo' ? 'scale-120 -translate-y-0.5' : 'scale-100'
+              }`}
+            />
             <span className="text-[10px] tracking-tight">Memo</span>
-          </button>
+          </motion.button>
         )}
 
-        <button
+        <motion.button
           type="button"
           onClick={() => handleNavClick('admin')}
-          className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
+          whileTap={{ scale: 0.86 }}
+          transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+          className={`relative h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
             activeTab === 'admin'
               ? 'text-[#09090B] font-semibold'
               : isAdmin
@@ -930,29 +1176,47 @@ function StoreApp() {
               : 'text-zinc-500'
           }`}
         >
-          <ShieldCheck size={19} />
+          {activeTab === 'admin' && (
+            <motion.span
+              layoutId="mobile-nav-indicator"
+              transition={{ type: 'spring', stiffness: 420, damping: 26 }}
+              className="absolute top-0 left-1/5 right-1/5 h-[3px] bg-[#09090B] rounded-b-full"
+            />
+          )}
+          <ShieldCheck
+            size={18}
+            className={`transition-transform duration-200 ${
+              activeTab === 'admin' ? 'scale-120 -translate-y-0.5' : 'scale-100'
+            }`}
+          />
           <span className="text-[10px] tracking-tight">
             {isAdmin ? 'Admin' : 'Staff'}
           </span>
-        </button>
+        </motion.button>
       </nav>
 
       {/* Modals & Floating Chatbot */}
-      {selectedWatch && (
-        <WatchDetailModal
-          watch={selectedWatch}
-          isAdmin={isAdmin}
-          onClose={() => setSelectedWatch(null)}
-          onAddToMemo={handleAddToMemo}
-        />
-      )}
+      <AnimatePresence>
+        {selectedWatch && (
+          <WatchDetailModal
+            key={selectedWatch.id}
+            watch={selectedWatch}
+            isAdmin={isAdmin}
+            onClose={() => setSelectedWatch(null)}
+            onAddToMemo={handleAddToMemo}
+          />
+        )}
+      </AnimatePresence>
 
-      {loginOpen && (
-        <AdminLoginModal
-          onClose={() => setLoginOpen(false)}
-          onSuccess={handleAdminSuccess}
-        />
-      )}
+      <AnimatePresence>
+        {loginOpen && (
+          <AdminLoginModal
+            key="admin-login-modal"
+            onClose={() => setLoginOpen(false)}
+            onSuccess={handleAdminSuccess}
+          />
+        )}
+      </AnimatePresence>
 
       <ShopChatbot
         watches={hydratedWatches}

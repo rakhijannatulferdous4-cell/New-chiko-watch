@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calculator, Lock, ReceiptText, X } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, useMotionTemplate, useMotionValue, useSpring } from 'motion/react';
 import { WatchItem } from '../types/watch';
 import { TripleTapPrice, formatBDT } from './TripleTapPrice';
 import { WatchImage } from './WatchImage';
@@ -46,21 +46,57 @@ export function WatchDetailModal({
       ? { label: 'Below Floor — Tight Margin', tone: 'text-amber-700' }
       : { label: 'Healthy Deal — Above Minimum Floor', tone: 'text-emerald-700' };
 
+  const showcaseRotateX = useMotionValue(0);
+  const showcaseRotateY = useMotionValue(0);
+  const showcaseGlareX = useMotionValue(50);
+  const showcaseGlareY = useMotionValue(50);
+  const showcaseActive = useMotionValue(0);
+
+  const smoothRotateX = useSpring(showcaseRotateX, { stiffness: 250, damping: 20 });
+  const smoothRotateY = useSpring(showcaseRotateY, { stiffness: 250, damping: 20 });
+  const showcaseGlare = useMotionTemplate`radial-gradient(circle at ${showcaseGlareX}% ${showcaseGlareY}%, rgba(255,255,255,0.62), rgba(255,255,255,0) 62%)`;
+
+  const applyShowcaseTilt = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const px = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const py = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    showcaseRotateX.set((0.5 - py) * 18);
+    showcaseRotateY.set((px - 0.5) * 18);
+    showcaseGlareX.set(px * 100);
+    showcaseGlareY.set(py * 100);
+    showcaseActive.set(1);
+  };
+
+  const resetShowcaseTilt = () => {
+    showcaseRotateX.set(0);
+    showcaseRotateY.set(0);
+    showcaseGlareX.set(50);
+    showcaseGlareY.set(50);
+    showcaseActive.set(0);
+  };
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/50 backdrop-blur-xs p-0 md:p-6"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+      style={{ perspective: 1300 }}
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm p-0 md:p-6"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={`${watch.brand} ${watch.model} details`}
     >
       <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.98 }}
-        transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+        initial={{ opacity: 0, y: 65, scale: 0.78, rotateX: 22, rotateY: -6 }}
+        animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0, rotateY: 0 }}
+        exit={{ opacity: 0, y: 45, scale: 0.85, rotateX: 16 }}
+        transition={{ type: 'spring', stiffness: 280, damping: 24, mass: 0.9 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-full md:max-w-3xl max-h-[92vh] overflow-y-auto rounded-t-3xl md:rounded-2xl bg-white border border-zinc-200 shadow-2xl"
+        style={{ transformStyle: 'preserve-3d' }}
+        className="w-full md:max-w-3xl max-h-[92vh] overflow-y-auto rounded-t-3xl md:rounded-2xl bg-white border border-zinc-200 shadow-[0_32px_64px_-16px_rgba(9,9,11,0.45)] will-change-transform"
       >
         {/* Mobile drag handle */}
         <div className="md:hidden pt-3 pb-1 flex justify-center">
@@ -79,31 +115,68 @@ export function WatchDetailModal({
               {watch.product_name || watch.model}
             </h2>
           </div>
-          <button
+          <motion.button
             type="button"
             onClick={onClose}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200 transition-colors active:scale-95 cursor-pointer"
+            whileHover={{ scale: 1.06, rotate: 90 }}
+            whileTap={{ scale: 0.88 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 24 }}
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200 transition-colors cursor-pointer"
             aria-label="Close product details"
           >
             <X size={20} />
-          </button>
+          </motion.button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 md:p-6">
-          {/* Left: Product Showcase */}
+          {/* Left: Levitating Interactive 3D Product Showcase */}
           <div className="space-y-4">
-            <div className="aspect-[4/3] w-full rounded-xl overflow-hidden bg-[#F4F4F5] border border-zinc-200">
-              <WatchImage
-                src={watch.image_url}
-                alt={`${watch.brand} ${watch.model}`}
-                brand={watch.brand}
-                model={watch.model}
-                category={watch.category}
-                iconSize={52}
-              />
+            <div style={{ perspective: 950 }}>
+              <motion.div
+                animate={{ y: [0, -5, 0] }}
+                transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
+              >
+                <motion.div
+                  onPointerDown={applyShowcaseTilt}
+                  onPointerMove={applyShowcaseTilt}
+                  onPointerLeave={resetShowcaseTilt}
+                  onPointerUp={resetShowcaseTilt}
+                  onPointerCancel={resetShowcaseTilt}
+                  whileHover={{ scale: 1.03 }}
+                  style={{
+                    rotateX: smoothRotateX,
+                    rotateY: smoothRotateY,
+                    transformStyle: 'preserve-3d',
+                    touchAction: 'pan-y',
+                  }}
+                  className="group relative aspect-[4/3] w-full rounded-xl overflow-hidden bg-[#F4F4F5] border border-zinc-200 shadow-md will-change-transform cursor-grab active:cursor-grabbing"
+                >
+                  <div style={{ transform: 'translateZ(20px)' }} className="w-full h-full">
+                    <WatchImage
+                      src={watch.image_url}
+                      alt={`${watch.brand} ${watch.model}`}
+                      brand={watch.brand}
+                      model={watch.model}
+                      category={watch.category}
+                      iconSize={52}
+                      className="transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-105"
+                    />
+                  </div>
+                  <motion.div
+                    aria-hidden="true"
+                    style={{ background: showcaseGlare }}
+                    className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mix-blend-overlay"
+                  />
+                </motion.div>
+              </motion.div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5 text-xs">
+            <motion.div
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.12, duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+              className="grid grid-cols-2 gap-2.5 text-xs"
+            >
               <div className="rounded-xl bg-zinc-50 border border-zinc-200 p-3">
                 <p className="text-zinc-500">Category</p>
                 <p className="mt-0.5 font-semibold text-zinc-900">{watch.category}</p>
@@ -128,7 +201,7 @@ export function WatchDetailModal({
                   {watch.stock_count > 0 ? `${watch.stock_count} Units` : 'Out of Stock'}
                 </p>
               </div>
-            </div>
+            </motion.div>
           </div>
 
           {/* Right: Pricing, Story & Bargaining Profit Calculator */}
@@ -191,8 +264,20 @@ export function WatchDetailModal({
 
                       <input
                         type="range"
-                        min={Math.max(0, Math.round(watch.real_buying_price * 0.7))}
-                        max={Math.max(100, Math.round(watch.display_buying_price * 1.05))}
+                        min={Math.min(
+                          Math.max(0, Math.round(watch.real_buying_price * 0.7)),
+                          customerOffer
+                        )}
+                        max={Math.max(
+                          100,
+                          Math.round(
+                            Math.max(
+                              watch.display_buying_price,
+                              watch.min_selling_price,
+                              customerOffer
+                            ) * 1.05
+                          )
+                        )}
                         step={50}
                         value={customerOffer}
                         onChange={(e) => setCustomerOfferStr(String(Number(e.target.value)))}
@@ -262,6 +347,6 @@ export function WatchDetailModal({
           </div>
         </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

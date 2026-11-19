@@ -115,11 +115,12 @@ export function ShopChatbot({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          initial={{ opacity: 0, y: 18, scale: 0.97 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 18, scale: 0.97 }}
-          transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-          className="fixed bottom-20 md:bottom-6 right-3 left-3 md:left-auto md:right-6 md:w-[400px] z-50 rounded-2xl bg-white border border-zinc-200 shadow-2xl flex flex-col max-h-[72vh] overflow-hidden"
+          initial={{ opacity: 0, y: 48, scale: 0.84, rotateX: 16 }}
+          animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
+          exit={{ opacity: 0, y: 36, scale: 0.88, rotateX: 12 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 24 }}
+          style={{ transformPerspective: 1100, transformOrigin: 'bottom right' }}
+          className="fixed bottom-20 md:bottom-6 right-3 left-3 md:left-auto md:right-6 md:w-[400px] z-50 rounded-2xl bg-white border border-zinc-200 shadow-[0_28px_60px_-14px_rgba(9,9,11,0.4)] flex flex-col max-h-[72vh] overflow-hidden will-change-transform"
           role="dialog"
           aria-label="New Chiko Watch and Electronics Concierge"
         >

@@ -651,14 +651,21 @@ export async function saveMemoRecord(
         headers: buildAuthHeaders(token),
         body: JSON.stringify(normalizedMemo),
       });
+      const json = await res.json().catch(() => ({}));
       if (res.status === 401) {
         throw new Error('Staff login expired. Please sign in again to save memos.');
       }
+      if (!res.ok && json?.error) {
+        throw new Error(String(json.error));
+      }
     } catch (err) {
-      if (err instanceof Error && err.message.includes('Staff login')) {
+      if (
+        err instanceof Error &&
+        (err.message.includes('Staff login') || err.message.includes('Supabase'))
+      ) {
         throw err;
       }
-      // keep local copy
+      // keep local copy if offline
     }
   }
 
