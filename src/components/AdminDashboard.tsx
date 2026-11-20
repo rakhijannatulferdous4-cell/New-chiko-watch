@@ -8,15 +8,18 @@ import {
   Cloud,
   CloudUpload,
   Copy,
+  CreditCard,
   Link2,
   Loader2,
   LogOut,
+  MessageSquare,
   Minus,
   Package,
   Pencil,
   Plus,
   ReceiptText,
   Search,
+  ShoppingBag,
   Sparkles,
   Square,
   Trash2,
@@ -33,7 +36,21 @@ import {
   uploadDataUrlToCloudinary,
   uploadWatchPhoto,
 } from '../services/watchStore';
-import { DigitalMemo, ProductCategory, WatchFormInput, WatchItem } from '../types/watch';
+import {
+  CustomerMessage,
+  CustomerOrder,
+  DigitalMemo,
+  PinResetRequest,
+  ProductCategory,
+  StorePaymentSettings,
+  WatchFormInput,
+  WatchItem,
+} from '../types/watch';
+import {
+  AdminMessagesInboxView,
+  AdminOrdersView,
+  AdminPaymentSettingsView,
+} from './AdminOrdersAndPayments';
 import {
   AdminAnalyticsView,
   AdminMediaCenterView,
@@ -45,6 +62,10 @@ import { WatchImage } from './WatchImage';
 interface AdminDashboardProps {
   watches: WatchItem[];
   savedMemos: DigitalMemo[];
+  orders: CustomerOrder[];
+  customerMessages: CustomerMessage[];
+  pinResetRequests: PinResetRequest[];
+  paymentSettings: StorePaymentSettings;
   adminUsername: string;
   adminToken: string;
   storageSource: 'supabase' | 'server' | 'local';
@@ -58,9 +79,24 @@ interface AdminDashboardProps {
   onDeleteWatch: (id: string) => Promise<void>;
   onAdjustStock: (id: string, delta: number) => Promise<void>;
   onAddToMemo?: (watch: WatchItem, agreedPrice?: number) => void;
+  onRefreshOrders: () => Promise<void>;
+  onOrderUpdated: (updated: CustomerOrder) => void;
+  onRefreshMessages: () => Promise<void>;
+  onRefreshPinResets: () => Promise<void>;
+  onMessageSent: (msg: CustomerMessage) => void;
+  onThreadMarkedRead: (phoneNormalized: string) => void;
+  onPaymentSettingsSaved: (next: StorePaymentSettings) => void;
+  onConvertOrderToMemo?: (order: CustomerOrder) => void;
 }
 
-type AdminWorkspaceTab = 'inventory' | 'analytics' | 'tools' | 'media';
+type AdminWorkspaceTab =
+  | 'inventory'
+  | 'orders'
+  | 'messages'
+  | 'payments'
+  | 'analytics'
+  | 'tools'
+  | 'media';
 type AdminStockFilter = 'all' | 'inStock' | 'lowStock' | 'outOfStock';
 type AdminMediaFilter = 'all' | 'cloudinary' | 'base64';
 type AdminSortOption =
@@ -191,6 +227,10 @@ function normalizeAiCategory(rawCategory: unknown): ProductCategory {
 export function AdminDashboard({
   watches,
   savedMemos,
+  orders,
+  customerMessages,
+  pinResetRequests,
+  paymentSettings,
   adminUsername,
   adminToken,
   storageSource,
@@ -204,6 +244,14 @@ export function AdminDashboard({
   onDeleteWatch,
   onAdjustStock,
   onAddToMemo,
+  onRefreshOrders,
+  onOrderUpdated,
+  onRefreshMessages,
+  onRefreshPinResets,
+  onMessageSent,
+  onThreadMarkedRead,
+  onPaymentSettingsSaved,
+  onConvertOrderToMemo,
 }: AdminDashboardProps) {
   // Workspace sub-tab
   const [workspaceTab, setWorkspaceTab] = useState<AdminWorkspaceTab>('inventory');
@@ -748,13 +796,41 @@ export function AdminDashboard({
       ? Math.round(((draftTag - draftOffer) / draftTag) * 100)
       : 0;
 
+  const pendingOrdersCount = useMemo(
+    () => orders.filter((o) => o.status === 'Pending').length,
+    [orders]
+  );
+
+  const unreadMessagesCount = useMemo(
+    () =>
+      customerMessages.filter((m) => m.sender === 'customer' && !m.read_by_admin).length +
+      pinResetRequests.length,
+    [customerMessages, pinResetRequests.length]
+  );
+
   const WORKSPACE_TABS: Array<{
     id: AdminWorkspaceTab;
     label: string;
     icon: React.ReactNode;
     badge?: string;
+    highlightBadge?: boolean;
   }> = [
     { id: 'inventory', label: 'Inventory & Bulk', icon: <Package size={15} /> },
+    {
+      id: 'orders',
+      label: 'Orders Management',
+      icon: <ShoppingBag size={15} />,
+      badge: pendingOrdersCount > 0 ? `${pendingOrdersCount}` : orders.length > 0 ? `${orders.length}` : undefined,
+      highlightBadge: pendingOrdersCount > 0,
+    },
+    {
+      id: 'messages',
+      label: 'Messages',
+      icon: <MessageSquare size={15} />,
+      badge: unreadMessagesCount > 0 ? `${unreadMessagesCount}` : undefined,
+      highlightBadge: unreadMessagesCount > 0,
+    },
+    { id: 'payments', label: 'Payment & Delivery', icon: <CreditCard size={15} /> },
     { id: 'analytics', label: 'Analytics & Profit', icon: <BarChart3 size={15} /> },
     { id: 'tools', label: 'Tools, Tags & CSV', icon: <Wrench size={15} /> },
     {
@@ -839,8 +915,14 @@ export function AdminDashboard({
                 {tab.icon}
                 <span>{tab.label}</span>
                 {tab.badge && (
-                  <span className="font-mono-num text-[11px] text-amber-700 font-bold">
-                    ({tab.badge})
+                  <span
+                    className={
+                      tab.highlightBadge
+                        ? 'px-1.5 py-0.5 rounded-full bg-rose-600 text-white font-mono-num text-[10px] font-bold animate-pulse'
+                        : 'font-mono-num text-[11px] text-amber-700 font-bold'
+                    }
+                  >
+                    {tab.highlightBadge ? tab.badge : `(${tab.badge})`}
                   </span>
                 )}
               </span>
@@ -1444,6 +1526,64 @@ export function AdminDashboard({
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+
+        {workspaceTab === 'orders' && (
+          <motion.div
+            key="ws-orders"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.18 }}
+          >
+            <AdminOrdersView
+              orders={orders}
+              customerMessages={customerMessages}
+              adminToken={adminToken}
+              onRefreshOrders={onRefreshOrders}
+              onOrderUpdated={onOrderUpdated}
+              onMessageSent={onMessageSent}
+              onThreadMarkedRead={onThreadMarkedRead}
+              onConvertOrderToMemo={onConvertOrderToMemo}
+            />
+          </motion.div>
+        )}
+
+        {workspaceTab === 'messages' && (
+          <motion.div
+            key="ws-messages"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.18 }}
+          >
+            <AdminMessagesInboxView
+              messages={customerMessages}
+              orders={orders}
+              pinResetRequests={pinResetRequests}
+              adminToken={adminToken}
+              onRefreshMessages={onRefreshMessages}
+              onRefreshPinResets={onRefreshPinResets}
+              onMessageSent={onMessageSent}
+              onThreadMarkedRead={onThreadMarkedRead}
+            />
+          </motion.div>
+        )}
+
+        {workspaceTab === 'payments' && (
+          <motion.div
+            key="ws-payments"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.18 }}
+          >
+            <AdminPaymentSettingsView
+              settings={paymentSettings}
+              adminToken={adminToken}
+              onSettingsSaved={onPaymentSettingsSaved}
+            />
           </motion.div>
         )}
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Heart, Minus, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Heart, Minus, Pencil, Plus, ShoppingBag, Trash2, X, Zap } from 'lucide-react';
 import { motion, useMotionTemplate, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { WatchItem } from '../types/watch';
 import { TripleTapPrice } from './TripleTapPrice';
@@ -10,7 +10,10 @@ interface WatchCardProps {
   isAdmin: boolean;
   index?: number;
   isSaved?: boolean;
+  inCartQty?: number;
   onToggleSave?: (id: string) => void;
+  onAddToCart?: (watch: WatchItem) => void;
+  onBuyNow?: (watch: WatchItem) => void;
   onSelect: (watch: WatchItem) => void;
   onAdjustStock?: (id: string, delta: number) => void;
   onEdit?: (watch: WatchItem) => void;
@@ -22,7 +25,10 @@ export function WatchCard({
   isAdmin,
   index = 0,
   isSaved = false,
+  inCartQty = 0,
   onToggleSave,
+  onAddToCart,
+  onBuyNow,
   onSelect,
   onAdjustStock,
   onEdit,
@@ -30,6 +36,7 @@ export function WatchCard({
 }: WatchCardProps) {
   const outOfStock = watch.stock_count <= 0;
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [justAdded, setJustAdded] = useState(false);
 
   useEffect(() => {
     if (!confirmDelete) return;
@@ -210,6 +217,54 @@ export function WatchCard({
                 View →
               </span>
             </div>
+
+            {(onAddToCart || onBuyNow) && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="pt-1.5 grid grid-cols-2 gap-1.5"
+              >
+                {onAddToCart && (
+                  <button
+                    type="button"
+                    disabled={outOfStock}
+                    onClick={() => {
+                      onAddToCart(watch);
+                      setJustAdded(true);
+                      window.setTimeout(() => setJustAdded(false), 1100);
+                    }}
+                    className="min-h-[30px] px-1.5 rounded-lg border border-zinc-300 bg-zinc-50 hover:bg-zinc-100 hover:border-zinc-900 text-[10px] sm:text-[10.5px] font-semibold text-[#09090B] flex items-center justify-center gap-1 disabled:opacity-40 transition-all active:scale-95 cursor-pointer truncate"
+                    aria-label={`Add ${watch.product_name || watch.model} to cart`}
+                  >
+                    {justAdded ? (
+                      <>
+                        <Check size={11} className="text-emerald-600 shrink-0" />
+                        <span className="truncate">Added</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShoppingBag size={11} className="shrink-0" />
+                        <span className="truncate">
+                          {inCartQty > 0 ? `Cart (${inCartQty})` : 'Add Cart'}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                )}
+                {onBuyNow && (
+                  <button
+                    type="button"
+                    disabled={outOfStock}
+                    onClick={() => onBuyNow(watch)}
+                    className="min-h-[30px] px-1.5 rounded-lg bg-[#09090B] hover:bg-zinc-800 text-[10px] sm:text-[10.5px] font-semibold text-white flex items-center justify-center gap-1 disabled:opacity-40 transition-all active:scale-95 cursor-pointer truncate shadow-2xs"
+                    aria-label={`Buy ${watch.product_name || watch.model} now`}
+                  >
+                    <Zap size={11} className="shrink-0" />
+                    <span className="truncate">Buy Now</span>
+                  </button>
+                )}
+              </div>
+            )}
           </motion.div>
 
           {isAdmin && (

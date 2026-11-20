@@ -645,6 +645,43 @@ class UnifiedAudioEngine {
       }
     });
   }
+  /**
+   * Distinct luxurious cash-register / double-bell alert chime when a new customer order arrives in Admin Mode.
+   */
+  playOrderAlert(): void {
+    this.runWithAudio((ctx, out, now) => {
+      const notes = [
+        { freq: 880, offset: 0, dur: 0.24, vol: 0.24 },
+        { freq: 1174.66, offset: 0.11, dur: 0.28, vol: 0.26 },
+        { freq: 1567.98, offset: 0.22, dur: 0.45, vol: 0.28 },
+      ];
+      notes.forEach(({ freq, offset, dur, vol }) => {
+        const osc = ctx.createOscillator();
+        const overtone = ctx.createOscillator();
+        const g = ctx.createGain();
+        const og = ctx.createGain();
+        const t = now + offset;
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
+        overtone.type = 'triangle';
+        overtone.frequency.setValueAtTime(freq * 2, t);
+        g.gain.setValueAtTime(0.001, t);
+        g.gain.linearRampToValueAtTime(vol, t + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        og.gain.setValueAtTime(0.001, t);
+        og.gain.linearRampToValueAtTime(vol * 0.28, t + 0.008);
+        og.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.7);
+        osc.connect(g);
+        overtone.connect(og);
+        g.connect(out);
+        og.connect(out);
+        osc.start(t);
+        overtone.start(t);
+        osc.stop(t + dur + 0.02);
+        overtone.stop(t + dur + 0.02);
+      });
+    });
+  }
 }
 
 export const unifiedAudio = new UnifiedAudioEngine();
@@ -659,6 +696,10 @@ export function playProductRevealSound(): void {
 
 export function playProductActionSound(kind: ProductSoundKind): void {
   unifiedAudio.playProductAction(kind);
+}
+
+export function playOrderAlertChime(): void {
+  unifiedAudio.playOrderAlert();
 }
 
 export function isGlobalSoundMuted(): boolean {

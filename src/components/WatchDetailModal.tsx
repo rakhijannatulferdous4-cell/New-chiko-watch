@@ -1,5 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Calculator, Check, Heart, Lock, ReceiptText, Share2, X } from 'lucide-react';
+import {
+  Calculator,
+  Check,
+  Heart,
+  Lock,
+  ReceiptText,
+  Share2,
+  ShoppingBag,
+  X,
+  Zap,
+} from 'lucide-react';
 import { motion } from 'motion/react';
 import { WatchItem } from '../types/watch';
 import { InteractiveProductStage } from './InteractiveProductStage';
@@ -9,7 +19,10 @@ interface WatchDetailModalProps {
   watch: WatchItem;
   isAdmin: boolean;
   isSaved?: boolean;
+  inCartQty?: number;
   onToggleSave?: (id: string) => void;
+  onAddToCart?: (watch: WatchItem) => void;
+  onBuyNow?: (watch: WatchItem) => void;
   onClose: () => void;
   onAddToMemo: (watch: WatchItem, agreedPrice?: number) => void;
 }
@@ -24,7 +37,10 @@ export function WatchDetailModal({
   watch,
   isAdmin,
   isSaved = false,
+  inCartQty = 0,
   onToggleSave,
+  onAddToCart,
+  onBuyNow,
   onClose,
   onAddToMemo,
 }: WatchDetailModalProps) {
@@ -33,11 +49,13 @@ export function WatchDetailModal({
   );
   const [showBargainTool, setShowBargainTool] = useState<boolean>(isAdmin);
   const [copiedShare, setCopiedShare] = useState(false);
+  const [addedFeedback, setAddedFeedback] = useState(false);
 
   useEffect(() => {
     setCustomerOfferStr(String(watch.min_selling_price));
     setShowBargainTool(isAdmin);
     setCopiedShare(false);
+    setAddedFeedback(false);
   }, [watch, isAdmin]);
 
   const handleShareDetails = async () => {
@@ -313,28 +331,73 @@ export function WatchDetailModal({
               )}
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
-              {isAdmin && (
+            <div className="space-y-2.5 pt-2">
+              {(onAddToCart || onBuyNow) && (
+                <div className="grid grid-cols-2 gap-2.5">
+                  {onAddToCart && (
+                    <button
+                      type="button"
+                      disabled={watch.stock_count <= 0}
+                      onClick={() => {
+                        onAddToCart(watch);
+                        setAddedFeedback(true);
+                        window.setTimeout(() => setAddedFeedback(false), 1400);
+                      }}
+                      className="min-h-[46px] px-4 rounded-xl border border-zinc-900 bg-white text-[#09090B] font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-50 disabled:opacity-40 transition-all active:scale-[0.98] cursor-pointer"
+                    >
+                      {addedFeedback ? (
+                        <>
+                          <Check size={16} className="text-emerald-600" />
+                          <span>Added to Cart</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingBag size={16} />
+                          <span>{inCartQty > 0 ? `Add More (${inCartQty})` : 'Add to Cart'}</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {onBuyNow && (
+                    <button
+                      type="button"
+                      disabled={watch.stock_count <= 0}
+                      onClick={() => {
+                        onClose();
+                        onBuyNow(watch);
+                      }}
+                      className="min-h-[46px] px-4 rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 disabled:opacity-40 transition-all active:scale-[0.98] cursor-pointer shadow-sm"
+                    >
+                      <Zap size={16} />
+                      <span>Buy Now</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAddToMemo(watch, customerOffer);
+                      onClose();
+                    }}
+                    disabled={watch.stock_count <= 0}
+                    className="flex-1 min-h-[44px] rounded-xl bg-zinc-900 text-white font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 disabled:opacity-40 transition-all active:scale-[0.98] cursor-pointer"
+                  >
+                    <ReceiptText size={16} />
+                    <span>Create Digital Memo</span>
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => {
-                    onAddToMemo(watch, customerOffer);
-                    onClose();
-                  }}
-                  disabled={watch.stock_count <= 0}
-                  className="flex-1 min-h-[46px] rounded-xl bg-[#09090B] text-white font-semibold text-sm flex items-center justify-center gap-2 hover:bg-zinc-800 disabled:opacity-40 transition-all active:scale-[0.98] cursor-pointer"
+                  onClick={onClose}
+                  className="min-h-[44px] px-5 rounded-xl border border-zinc-300 text-sm font-medium text-zinc-900 hover:bg-zinc-100 transition-all active:scale-[0.98] cursor-pointer"
                 >
-                  <ReceiptText size={17} />
-                  <span>Create Digital Memo</span>
+                  Close
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={onClose}
-                className="min-h-[46px] px-5 rounded-xl border border-zinc-300 text-sm font-medium text-zinc-900 hover:bg-zinc-100 transition-all active:scale-[0.98] cursor-pointer"
-              >
-                Close
-              </button>
+              </div>
             </div>
           </div>
         </div>

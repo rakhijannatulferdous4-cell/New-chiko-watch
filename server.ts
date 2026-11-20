@@ -52,9 +52,365 @@ interface StoredMemo {
   created_at: string;
 }
 
+interface StoredPaymentGateway {
+  id: 'bkash' | 'nagad' | 'rocket';
+  label: string;
+  enabled: boolean;
+  number: string;
+  accountType: 'Personal' | 'Agent' | 'Merchant';
+}
+
+interface StoredPaymentSettings {
+  gateways: {
+    bkash: StoredPaymentGateway;
+    nagad: StoredPaymentGateway;
+    rocket: StoredPaymentGateway;
+  };
+  insideCityCharge: number;
+  outsideCityCharge: number;
+  insideCityLabel: string;
+  outsideCityLabel: string;
+  requireCodAdvanceDelivery: boolean;
+  telegramBotToken: string;
+  telegramChatId: string;
+  updatedAt: string;
+}
+
+interface StoredOrderLineItem {
+  watchId: string;
+  productName: string;
+  brand: string;
+  model: string;
+  color: string;
+  imageUrl?: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+interface StoredCustomerOrder {
+  id: string;
+  order_number: string;
+  customer_name: string;
+  customer_phone: string;
+  delivery_address: string;
+  delivery_zone: 'inside_city' | 'outside_city';
+  delivery_charge: number;
+  subtotal: number;
+  total_amount: number;
+  payment_type: 'full_payment' | 'cod_advance';
+  payment_gateway: 'bkash' | 'nagad' | 'rocket' | 'cod';
+  receiving_number: string;
+  sender_number: string;
+  trx_id: string;
+  paid_amount: number;
+  due_amount: number;
+  status: 'Pending' | 'Verified' | 'Shipped' | 'Delivered' | 'Rejected';
+  items: StoredOrderLineItem[];
+  notes: string;
+  created_at: string;
+}
+
+interface StoredCustomerAccount {
+  id: string;
+  customer_code: string;
+  name: string;
+  phone: string;
+  phone_normalized: string;
+  pin_hash: string;
+  default_address: string;
+  delivery_zone: 'inside_city' | 'outside_city';
+  created_at: string;
+}
+
+interface StoredCustomerMessage {
+  id: string;
+  customer_phone_normalized: string;
+  customer_name: string;
+  order_number: string;
+  sender: 'admin' | 'customer';
+  body: string;
+  read_by_admin: boolean;
+  read_by_customer: boolean;
+  created_at: string;
+}
+
+interface StoredPinResetRequest {
+  id: string;
+  phone_normalized: string;
+  phone: string;
+  customer_name: string;
+  customer_code: string;
+  reset_code: string;
+  created_at: string;
+  expires_at: string;
+}
+
 interface ServerStoreData {
   watches: StoredWatch[];
   memos: StoredMemo[];
+  paymentSettings?: StoredPaymentSettings;
+  orders?: StoredCustomerOrder[];
+  customerAccounts?: StoredCustomerAccount[];
+  customerMessages?: StoredCustomerMessage[];
+  pinResetRequests?: StoredPinResetRequest[];
+}
+
+function normalizePhoneKey(raw: string): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  // Normalize Bangladeshi numbers (+88017... / 88017... / 017...) to last 11 digits
+  if (digits.length >= 11 && digits.slice(-11).startsWith('01')) {
+    return digits.slice(-11);
+  }
+  if (digits.length === 10 && digits.startsWith('1')) {
+    return `0${digits}`;
+  }
+  return digits.slice(-15);
+}
+
+function hashCustomerPin(pin: string): string {
+  const salt = crypto.randomBytes(12).toString('hex');
+  const hash = crypto.scryptSync(pin, salt, 32).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyCustomerPin(pin: string, storedHash: string): boolean {
+  try {
+    const parts = String(storedHash || '').split(':');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
+    const [salt, expectedHex] = parts;
+    const actualBuf = crypto.scryptSync(pin, salt, 32);
+    const expectedBuf = Buffer.from(expectedHex, 'hex');
+    if (actualBuf.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(actualBuf, expectedBuf);
+  } catch {
+    return false;
+  }
+}
+
+function createCustomerToken(accountId: string, phoneNormalized: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: accountId,
+      phone: phoneNormalized,
+      role: 'customer',
+      exp: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    })
+  ).toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getTokenSecret())
+    .update(`cust:${payload}`)
+    .digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyCustomerToken(req: Request): { id: string; phoneNormalized: string } | null {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7).trim();
+  const dotIdx = token.indexOf('.');
+  if (dotIdx <= 0) return null;
+  const payload = token.slice(0, dotIdx);
+  const sig = token.slice(dotIdx + 1);
+  const expectedSig = crypto
+    .createHmac('sha256', getTokenSecret())
+    .update(`cust:${payload}`)
+    .digest('base64url');
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return null;
+  }
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (
+      decoded?.role !== 'customer' ||
+      typeof decoded?.sub !== 'string' ||
+      typeof decoded?.phone !== 'string' ||
+      typeof decoded?.exp !== 'number' ||
+      decoded.exp < Date.now()
+    ) {
+      return null;
+    }
+    return { id: decoded.sub, phoneNormalized: decoded.phone };
+  } catch {
+    return null;
+  }
+}
+
+function toPublicCustomerAccount(acc: StoredCustomerAccount) {
+  return {
+    id: acc.id,
+    customer_code: acc.customer_code,
+    name: acc.name,
+    phone: acc.phone,
+    phone_normalized: acc.phone_normalized,
+    default_address: acc.default_address || '',
+    delivery_zone: acc.delivery_zone === 'outside_city' ? 'outside_city' : 'inside_city',
+    created_at: acc.created_at,
+  };
+}
+
+function getDefaultPaymentSettings(): StoredPaymentSettings {
+  return {
+    gateways: {
+      bkash: {
+        id: 'bkash',
+        label: 'bKash',
+        enabled: true,
+        number: '01700-000000',
+        accountType: 'Personal',
+      },
+      nagad: {
+        id: 'nagad',
+        label: 'Nagad',
+        enabled: false,
+        number: '',
+        accountType: 'Personal',
+      },
+      rocket: {
+        id: 'rocket',
+        label: 'Rocket',
+        enabled: false,
+        number: '',
+        accountType: 'Personal',
+      },
+    },
+    insideCityCharge: 60,
+    outsideCityCharge: 120,
+    insideCityLabel: 'Inside City',
+    outsideCityLabel: 'Outside City',
+    requireCodAdvanceDelivery: true,
+    telegramBotToken: '',
+    telegramChatId: '',
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function sanitizePaymentSettings(
+  raw: Record<string, unknown> | undefined,
+  existing?: StoredPaymentSettings
+): StoredPaymentSettings {
+  const base = existing || getDefaultPaymentSettings();
+  const rawGateways = (raw?.gateways && typeof raw.gateways === 'object'
+    ? raw.gateways
+    : {}) as Record<string, Record<string, unknown> | undefined>;
+
+  const sanitizeGateway = (
+    id: 'bkash' | 'nagad' | 'rocket',
+    label: string
+  ): StoredPaymentGateway => {
+    const g = rawGateways[id];
+    const prev = base.gateways[id];
+    const acct = g?.accountType;
+    const validAcct: 'Personal' | 'Agent' | 'Merchant' =
+      acct === 'Personal' || acct === 'Agent' || acct === 'Merchant'
+        ? acct
+        : prev.accountType;
+    return {
+      id,
+      label,
+      enabled: typeof g?.enabled === 'boolean' ? g.enabled : prev.enabled,
+      number:
+        typeof g?.number === 'string'
+          ? g.number.trim().slice(0, 32)
+          : prev.number,
+      accountType: validAcct,
+    };
+  };
+
+  const toCharge = (val: unknown, fallback: number) => {
+    const n = Number(val);
+    return Number.isFinite(n) && n >= 0 ? Math.min(50000, Math.round(n)) : fallback;
+  };
+
+  return {
+    gateways: {
+      bkash: sanitizeGateway('bkash', 'bKash'),
+      nagad: sanitizeGateway('nagad', 'Nagad'),
+      rocket: sanitizeGateway('rocket', 'Rocket'),
+    },
+    insideCityCharge: toCharge(raw?.insideCityCharge, base.insideCityCharge),
+    outsideCityCharge: toCharge(raw?.outsideCityCharge, base.outsideCityCharge),
+    insideCityLabel:
+      typeof raw?.insideCityLabel === 'string' && raw.insideCityLabel.trim()
+        ? raw.insideCityLabel.trim().slice(0, 48)
+        : base.insideCityLabel,
+    outsideCityLabel:
+      typeof raw?.outsideCityLabel === 'string' && raw.outsideCityLabel.trim()
+        ? raw.outsideCityLabel.trim().slice(0, 48)
+        : base.outsideCityLabel,
+    requireCodAdvanceDelivery:
+      typeof raw?.requireCodAdvanceDelivery === 'boolean'
+        ? raw.requireCodAdvanceDelivery
+        : base.requireCodAdvanceDelivery,
+    telegramBotToken:
+      typeof raw?.telegramBotToken === 'string'
+        ? raw.telegramBotToken.trim().slice(0, 180)
+        : base.telegramBotToken,
+    telegramChatId:
+      typeof raw?.telegramChatId === 'string'
+        ? raw.telegramChatId.trim().slice(0, 80)
+        : base.telegramChatId,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function toPublicPaymentSettings(settings: StoredPaymentSettings): StoredPaymentSettings {
+  return {
+    ...settings,
+    telegramBotToken: '',
+    telegramChatId: '',
+  };
+}
+
+function escapeTelegramHtml(text: string): string {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+async function sendTelegramMessage(
+  botToken: string,
+  chatId: string,
+  htmlMessage: string
+): Promise<{ sent: boolean; error?: string }> {
+  const token = botToken.trim();
+  const chat = chatId.trim();
+  if (!token || !chat) {
+    return { sent: false, error: 'Telegram Bot Token or Chat ID is not configured.' };
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 9000);
+    const res = await fetch(`https://api.telegram.org/bot${encodeURIComponent(token)}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chat,
+        text: htmlMessage,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const json = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string };
+    if (!res.ok || !json.ok) {
+      return {
+        sent: false,
+        error: json.description || `Telegram API returned HTTP ${res.status}`,
+      };
+    }
+    return { sent: true };
+  } catch (err) {
+    return {
+      sent: false,
+      error: err instanceof Error ? err.message : 'Failed to reach Telegram API',
+    };
+  }
 }
 
 let storeCache: ServerStoreData | null = null;
@@ -68,13 +424,28 @@ function readServerStore(): ServerStoreData {
       storeCache = {
         watches: Array.isArray(parsed?.watches) ? parsed.watches : [],
         memos: Array.isArray(parsed?.memos) ? parsed.memos : [],
+        paymentSettings: parsed?.paymentSettings
+          ? sanitizePaymentSettings(parsed.paymentSettings as Record<string, unknown>)
+          : getDefaultPaymentSettings(),
+        orders: Array.isArray(parsed?.orders) ? parsed.orders : [],
+        customerAccounts: Array.isArray(parsed?.customerAccounts) ? parsed.customerAccounts : [],
+        customerMessages: Array.isArray(parsed?.customerMessages) ? parsed.customerMessages : [],
+        pinResetRequests: Array.isArray(parsed?.pinResetRequests) ? parsed.pinResetRequests : [],
       };
       return storeCache;
     }
   } catch (err) {
     console.warn('Unable to read .data/store.json, starting empty:', err);
   }
-  storeCache = { watches: [], memos: [] };
+  storeCache = {
+    watches: [],
+    memos: [],
+    paymentSettings: getDefaultPaymentSettings(),
+    orders: [],
+    customerAccounts: [],
+    customerMessages: [],
+    pinResetRequests: [],
+  };
   return storeCache;
 }
 
@@ -1089,6 +1460,1186 @@ async function startServer() {
     const nextMemos = store.memos.filter((m) => m.id !== id);
     writeServerStore({ ...store, memos: nextMemos });
     return res.json({ ok: true, source: 'server', memos: nextMemos });
+  });
+
+  // =========================================================================
+  // E-Commerce Payment Settings, Customer Orders & Instant Telegram Alerts
+  // =========================================================================
+
+  async function loadActivePaymentSettings(): Promise<{
+    settings: StoredPaymentSettings;
+    source: 'supabase' | 'server';
+  }> {
+    const store = readServerStore();
+    const fallback = store.paymentSettings || getDefaultPaymentSettings();
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('store_settings')
+          .select('config, updated_at')
+          .eq('id', 'default')
+          .maybeSingle();
+        if (!error && data?.config && typeof data.config === 'object') {
+          const sanitized = sanitizePaymentSettings(
+            data.config as Record<string, unknown>,
+            fallback
+          );
+          if (typeof data.updated_at === 'string') {
+            sanitized.updatedAt = data.updated_at;
+          }
+          writeServerStore({ ...store, paymentSettings: sanitized });
+          return { settings: sanitized, source: 'supabase' };
+        }
+      } catch {
+        // Table not yet created in Supabase; safely use server store
+      }
+    }
+    return { settings: fallback, source: 'server' };
+  }
+
+  app.get('/api/store-settings', async (req: Request, res: Response) => {
+    const isAdmin = Boolean(verifyAdminToken(req));
+    const { settings, source } = await loadActivePaymentSettings();
+    return res.json({
+      ok: true,
+      source,
+      settings: isAdmin ? settings : toPublicPaymentSettings(settings),
+    });
+  });
+
+  app.put('/api/store-settings', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required to update settings.' });
+    }
+    const { settings: current } = await loadActivePaymentSettings();
+    const nextSettings = sanitizePaymentSettings(
+      (req.body ?? {}) as Record<string, unknown>,
+      current
+    );
+
+    const store = readServerStore();
+    writeServerStore({ ...store, paymentSettings: nextSettings });
+
+    let source: 'supabase' | 'server' = 'server';
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('store_settings').upsert(
+          [
+            {
+              id: 'default',
+              config: nextSettings,
+              updated_at: nextSettings.updatedAt,
+            },
+          ],
+          { onConflict: 'id' }
+        );
+        if (!error) {
+          source = 'supabase';
+        }
+      } catch {
+        // Fallback already saved in .data/store.json
+      }
+    }
+
+    return res.json({ ok: true, source, settings: nextSettings });
+  });
+
+  app.post('/api/store-settings/test-telegram', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    const { settings } = await loadActivePaymentSettings();
+    const token =
+      typeof req.body?.telegramBotToken === 'string' && req.body.telegramBotToken.trim()
+        ? req.body.telegramBotToken.trim()
+        : settings.telegramBotToken;
+    const chatId =
+      typeof req.body?.telegramChatId === 'string' && req.body.telegramChatId.trim()
+        ? req.body.telegramChatId.trim()
+        : settings.telegramChatId;
+
+    const testHtml = [
+      '<b>✅ New Chiko Watch — Telegram Order Alerts Active!</b>',
+      '',
+      'Your store is connected. New customer orders with bKash TrxID &amp; COD advance payments will appear here instantly.',
+      `<i>Tested at ${escapeTelegramHtml(new Date().toLocaleString())}</i>`,
+    ].join('\n');
+
+    const result = await sendTelegramMessage(token, chatId, testHtml);
+    if (!result.sent) {
+      return res.status(400).json({ ok: false, error: result.error || 'Telegram test failed.' });
+    }
+    return res.json({ ok: true });
+  });
+
+  app.get('/api/orders', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required to view orders.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('customer_orders')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        if (!error && Array.isArray(data)) {
+          const orders = data.map((row) => ({
+            ...(row as unknown as StoredCustomerOrder),
+            items: Array.isArray((row as Record<string, unknown>).items)
+              ? ((row as Record<string, unknown>).items as StoredOrderLineItem[])
+              : [],
+          }));
+          return res.json({ ok: true, source: 'supabase', orders });
+        }
+      } catch {
+        // Fall through to local server store
+      }
+    }
+
+    const store = readServerStore();
+    return res.json({ ok: true, source: 'server', orders: store.orders || [] });
+  });
+
+  app.post('/api/orders', async (req: Request, res: Response) => {
+    try {
+      // Strictly require a verified Customer Account before accepting any order
+      const customerAuth = verifyCustomerToken(req);
+      if (!customerAuth) {
+        return res.status(401).json({
+          ok: false,
+          code: 'ACCOUNT_REQUIRED',
+          error: 'Order place korar age apnar Customer Account create ba Sign In korun.',
+        });
+      }
+      const verifiedAccount = await findCustomerAccountByPhone(customerAuth.phoneNormalized);
+      if (!verifiedAccount) {
+        return res.status(401).json({
+          ok: false,
+          code: 'ACCOUNT_REQUIRED',
+          error: 'Customer account pawa jayni. Doya kore abar Sign In ba Account create korun.',
+        });
+      }
+
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const customerName =
+        String(body.customer_name ?? verifiedAccount.name ?? '').trim().slice(0, 120) ||
+        verifiedAccount.name;
+      // Bind phone to the verified customer account so order history & status updates always stay synced
+      const customerPhone = verifiedAccount.phone;
+      const deliveryAddress = String(body.delivery_address ?? '').trim().slice(0, 500);
+      const deliveryZone: 'inside_city' | 'outside_city' =
+        body.delivery_zone === 'outside_city' ? 'outside_city' : 'inside_city';
+      const paymentType: 'full_payment' | 'cod_advance' =
+        body.payment_type === 'cod_advance' ? 'cod_advance' : 'full_payment';
+
+      const rawItems = Array.isArray(body.items) ? body.items : [];
+      if (!customerName || !customerPhone || !deliveryAddress) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Please enter your Name and Full Delivery Address.',
+        });
+      }
+      if (rawItems.length === 0) {
+        return res.status(400).json({ ok: false, error: 'Your cart is empty.' });
+      }
+
+      const items: StoredOrderLineItem[] = rawItems.slice(0, 40).map((it) => {
+        const row = (it ?? {}) as Record<string, unknown>;
+        const qty = Math.max(1, Math.min(99, Math.round(Number(row.quantity) || 1)));
+        const unitPrice = Math.max(0, Math.round((Number(row.unitPrice) || 0) * 100) / 100);
+        return {
+          watchId: String(row.watchId ?? '').slice(0, 128),
+          productName: String(row.productName ?? row.model ?? 'Product').trim().slice(0, 160),
+          brand: String(row.brand ?? 'New Chiko').trim().slice(0, 80),
+          model: String(row.model ?? '').trim().slice(0, 120),
+          color: String(row.color ?? '').trim().slice(0, 80),
+          imageUrl: typeof row.imageUrl === 'string' ? row.imageUrl.slice(0, 800000) : '',
+          quantity: qty,
+          unitPrice,
+          lineTotal: Math.round(unitPrice * qty * 100) / 100,
+        };
+      });
+
+      const { settings } = await loadActivePaymentSettings();
+      const deliveryCharge =
+        deliveryZone === 'outside_city' ? settings.outsideCityCharge : settings.insideCityCharge;
+      const subtotal = Math.round(items.reduce((sum, i) => sum + i.lineTotal, 0) * 100) / 100;
+      const totalAmount = Math.round((subtotal + deliveryCharge) * 100) / 100;
+
+      const needsAdvancePayment =
+        paymentType === 'full_payment' || settings.requireCodAdvanceDelivery;
+
+      const requestedGw = String(body.payment_gateway ?? 'bkash');
+      const gatewayKey: 'bkash' | 'nagad' | 'rocket' =
+        requestedGw === 'nagad' || requestedGw === 'rocket' ? requestedGw : 'bkash';
+      const activeGw = settings.gateways[gatewayKey];
+
+      const senderNumber = String(body.sender_number ?? '').trim().slice(0, 32);
+      const trxId = String(body.trx_id ?? '').trim().toUpperCase().slice(0, 64);
+
+      if (needsAdvancePayment) {
+        if (!senderNumber || senderNumber.length < 6) {
+          return res.status(400).json({
+            ok: false,
+            error: `Please enter your sender ${activeGw.label} number.`,
+          });
+        }
+        if (!trxId || trxId.length < 4) {
+          return res.status(400).json({
+            ok: false,
+            error: `Please enter a valid ${activeGw.label} Transaction ID (TrxID).`,
+          });
+        }
+      }
+
+      const paidAmount =
+        paymentType === 'full_payment'
+          ? totalAmount
+          : settings.requireCodAdvanceDelivery
+          ? deliveryCharge
+          : 0;
+      const dueAmount = Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100);
+
+      const now = new Date();
+      const orderNum = `NCW-${String(now.getFullYear()).slice(-2)}${String(
+        now.getMonth() + 1
+      ).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${Math.floor(
+        1000 + Math.random() * 9000
+      )}`;
+
+      const orderRecord: StoredCustomerOrder = {
+        id: `ord-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        order_number: orderNum,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        delivery_address: deliveryAddress,
+        delivery_zone: deliveryZone,
+        delivery_charge: deliveryCharge,
+        subtotal,
+        total_amount: totalAmount,
+        payment_type: paymentType,
+        payment_gateway: needsAdvancePayment ? gatewayKey : 'cod',
+        receiving_number: needsAdvancePayment ? activeGw.number : '',
+        sender_number: needsAdvancePayment ? senderNumber : '',
+        trx_id: needsAdvancePayment ? trxId : '',
+        paid_amount: paidAmount,
+        due_amount: dueAmount,
+        status: 'Pending',
+        items,
+        notes: String(body.notes ?? '').trim().slice(0, 300),
+        created_at: now.toISOString(),
+      };
+
+      let savedOrder = orderRecord;
+      let source: 'supabase' | 'server' = 'server';
+
+      const supabase = getServerSupabase();
+      if (supabase) {
+        try {
+          const { id: _localId, ...insertPayload } = orderRecord;
+          const { data, error } = await supabase
+            .from('customer_orders')
+            .insert([insertPayload])
+            .select()
+            .single();
+          if (!error && data) {
+            savedOrder = {
+              ...(data as unknown as StoredCustomerOrder),
+              items: Array.isArray((data as Record<string, unknown>).items)
+                ? ((data as Record<string, unknown>).items as StoredOrderLineItem[])
+                : orderRecord.items,
+            };
+            source = 'supabase';
+          }
+        } catch {
+          // Fall back to server store below
+        }
+      }
+
+      if (source !== 'supabase') {
+        const store = readServerStore();
+        const nextOrders = [savedOrder, ...(store.orders || [])].slice(0, 300);
+        writeServerStore({ ...store, orders: nextOrders });
+      }
+
+      // Immediately dispatch formatted Telegram Bot alert if configured
+      let telegramSent = false;
+      if (settings.telegramBotToken && settings.telegramChatId) {
+        const paymentBadge =
+          savedOrder.payment_type === 'full_payment'
+            ? `FULL PAID (${activeGw.label})`
+            : settings.requireCodAdvanceDelivery
+            ? `COD - DELIVERY ADVANCE PAID (${activeGw.label})`
+            : 'CASH ON DELIVERY';
+
+        const zoneLabel =
+          savedOrder.delivery_zone === 'outside_city'
+            ? settings.outsideCityLabel
+            : settings.insideCityLabel;
+
+        const itemsLines = savedOrder.items
+          .map(
+            (i, idx) =>
+              `${idx + 1}. ${escapeTelegramHtml(i.productName)} (${escapeTelegramHtml(
+                i.brand
+              )}) × ${i.quantity} — ৳${i.lineTotal.toLocaleString('en-BD')}`
+          )
+          .join('\n');
+
+        const tgHtml = [
+          `<b>🛍️ NEW ORDER — ${escapeTelegramHtml(savedOrder.order_number)}</b>`,
+          `<b>Payment:</b> ${escapeTelegramHtml(paymentBadge)}`,
+          '',
+          `<b>👤 Customer:</b> ${escapeTelegramHtml(savedOrder.customer_name)} (<code>${escapeTelegramHtml(
+            verifiedAccount.customer_code
+          )}</code>)`,
+          `<b>📞 Phone:</b> ${escapeTelegramHtml(savedOrder.customer_phone)}`,
+          `<b>📍 Address:</b> ${escapeTelegramHtml(savedOrder.delivery_address)} (${escapeTelegramHtml(
+            zoneLabel
+          )})`,
+          '',
+          `<b>📦 Items:</b>`,
+          itemsLines,
+          '',
+          `<b>💵 Subtotal:</b> ৳${savedOrder.subtotal.toLocaleString('en-BD')}`,
+          `<b>🚚 Delivery:</b> ৳${savedOrder.delivery_charge.toLocaleString('en-BD')}`,
+          `<b>✅ Paid Now:</b> ৳${savedOrder.paid_amount.toLocaleString('en-BD')}`,
+          `<b>⏳ Due on Delivery:</b> ৳${savedOrder.due_amount.toLocaleString('en-BD')}`,
+          savedOrder.trx_id
+            ? `<b>🧾 ${escapeTelegramHtml(activeGw.label)} TrxID:</b> <code>${escapeTelegramHtml(
+                savedOrder.trx_id
+              )}</code>\n<b>📲 Sender:</b> ${escapeTelegramHtml(savedOrder.sender_number)}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        const tgResult = await sendTelegramMessage(
+          settings.telegramBotToken,
+          settings.telegramChatId,
+          tgHtml
+        );
+        telegramSent = tgResult.sent;
+      }
+
+      return res.status(201).json({
+        ok: true,
+        source,
+        order: savedOrder,
+        telegramSent,
+      });
+    } catch (err) {
+      console.error('Order submission error:', err);
+      return res.status(500).json({
+        ok: false,
+        error: 'Unable to submit your order right now. Please try again.',
+      });
+    }
+  });
+
+  async function appendCustomerMessage(input: {
+    customer_phone_normalized: string;
+    customer_name: string;
+    order_number?: string;
+    sender: 'admin' | 'customer';
+    body: string;
+  }): Promise<StoredCustomerMessage> {
+    const record: StoredCustomerMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      customer_phone_normalized: input.customer_phone_normalized,
+      customer_name: input.customer_name.slice(0, 120),
+      order_number: (input.order_number || '').slice(0, 64),
+      sender: input.sender,
+      body: input.body.trim().slice(0, 1000),
+      read_by_admin: input.sender === 'admin',
+      read_by_customer: input.sender === 'customer',
+      created_at: new Date().toISOString(),
+    };
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { id: _localId, ...insertPayload } = record;
+        const { data, error } = await supabase
+          .from('customer_messages')
+          .insert([insertPayload])
+          .select()
+          .single();
+        if (!error && data) {
+          return data as unknown as StoredCustomerMessage;
+        }
+      } catch {
+        // Fallback to server store below
+      }
+    }
+
+    const store = readServerStore();
+    const nextMessages = [record, ...(store.customerMessages || [])].slice(0, 1000);
+    writeServerStore({ ...store, customerMessages: nextMessages });
+    return record;
+  }
+
+  async function loadAllOrdersForLookup(): Promise<StoredCustomerOrder[]> {
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('customer_orders')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(300);
+        if (!error && Array.isArray(data)) {
+          return data.map((row) => ({
+            ...(row as unknown as StoredCustomerOrder),
+            items: Array.isArray((row as Record<string, unknown>).items)
+              ? ((row as Record<string, unknown>).items as StoredOrderLineItem[])
+              : [],
+          }));
+        }
+      } catch {
+        // Fall through to local store
+      }
+    }
+    return readServerStore().orders || [];
+  }
+
+  async function loadAllCustomerMessages(): Promise<StoredCustomerMessage[]> {
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('customer_messages')
+          .select('*')
+          .order('created_at', { ascending: true })
+          .limit(600);
+        if (!error && Array.isArray(data)) {
+          return data as unknown as StoredCustomerMessage[];
+        }
+      } catch {
+        // Fall through to local store
+      }
+    }
+    const list = readServerStore().customerMessages || [];
+    return [...list].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  }
+
+  async function findCustomerAccountByPhone(
+    phoneNormalized: string
+  ): Promise<StoredCustomerAccount | null> {
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('customer_accounts')
+          .select('*')
+          .eq('phone_normalized', phoneNormalized)
+          .maybeSingle();
+        if (!error && data) {
+          return data as unknown as StoredCustomerAccount;
+        }
+      } catch {
+        // Fall through
+      }
+    }
+    const local = (readServerStore().customerAccounts || []).find(
+      (a) => a.phone_normalized === phoneNormalized
+    );
+    return local || null;
+  }
+
+  async function handleOrderStatusUpdate(req: Request, res: Response) {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    const id = req.params.id;
+    const status = req.body?.status;
+    const noteProvided = typeof req.body?.notes === 'string';
+    const nextNote = noteProvided ? String(req.body.notes).trim().slice(0, 300) : undefined;
+    if (
+      status !== 'Pending' &&
+      status !== 'Verified' &&
+      status !== 'Shipped' &&
+      status !== 'Delivered' &&
+      status !== 'Rejected'
+    ) {
+      return res.status(400).json({ ok: false, error: 'Invalid order status.' });
+    }
+
+    const updatePayload: Record<string, unknown> = { status };
+    if (noteProvided) {
+      updatePayload.notes = nextNote;
+    }
+
+    let updatedOrder: StoredCustomerOrder | null = null;
+    let source: 'supabase' | 'server' = 'server';
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const supabase = getServerSupabase();
+    if (supabase && isUuid) {
+      try {
+        const { data, error } = await supabase
+          .from('customer_orders')
+          .update(updatePayload)
+          .eq('id', id)
+          .select()
+          .single();
+        if (!error && data) {
+          updatedOrder = {
+            ...(data as unknown as StoredCustomerOrder),
+            items: Array.isArray((data as Record<string, unknown>).items)
+              ? ((data as Record<string, unknown>).items as StoredOrderLineItem[])
+              : [],
+          };
+          source = 'supabase';
+        } else if (error) {
+          return res.status(502).json({
+            ok: false,
+            error: `Supabase order update failed: ${error.message}`,
+          });
+        }
+      } catch (err) {
+        return res.status(502).json({
+          ok: false,
+          error: err instanceof Error ? err.message : 'Supabase order update failed.',
+        });
+      }
+    }
+
+    if (!updatedOrder) {
+      const store = readServerStore();
+      const nextOrders = (store.orders || []).map((o) => {
+        if (o.id === id) {
+          updatedOrder = {
+            ...o,
+            status,
+            ...(noteProvided ? { notes: nextNote || '' } : {}),
+          };
+          return updatedOrder;
+        }
+        return o;
+      });
+      if (!updatedOrder) {
+        return res.status(404).json({ ok: false, error: 'Order not found.' });
+      }
+      writeServerStore({ ...store, orders: nextOrders });
+    }
+
+    // Automatically post a clean status notification to the customer's Account Inbox
+    const phoneKey = normalizePhoneKey(updatedOrder.customer_phone);
+    if (phoneKey && status !== 'Pending') {
+      let autoText = '';
+      if (status === 'Verified') {
+        autoText = `✅ Order ${updatedOrder.order_number} has been ACCEPTED! Your payment is verified and we are preparing your parcel.`;
+      } else if (status === 'Rejected') {
+        const reasonDetail = nextNote ? ` (${nextNote})` : '';
+        autoText = `❌ Order ${updatedOrder.order_number} was REJECTED${reasonDetail}. Please reply here if you need help or submitted the wrong TrxID.`;
+      } else if (status === 'Shipped') {
+        autoText = `🚚 Order ${updatedOrder.order_number} has been SHIPPED! Due on delivery: ৳${Number(
+          updatedOrder.due_amount || 0
+        ).toLocaleString('en-BD')}.`;
+      } else if (status === 'Delivered') {
+        autoText = `🎉 Order ${updatedOrder.order_number} has been DELIVERED. Thank you for shopping with New Chiko Watch & Electronics!`;
+      }
+      if (autoText) {
+        await appendCustomerMessage({
+          customer_phone_normalized: phoneKey,
+          customer_name: updatedOrder.customer_name,
+          order_number: updatedOrder.order_number,
+          sender: 'admin',
+          body: autoText,
+        });
+      }
+    }
+
+    return res.json({ ok: true, source, order: updatedOrder });
+  }
+
+  app.patch('/api/orders/:id/status', handleOrderStatusUpdate);
+  app.post('/api/orders/:id/status', handleOrderStatusUpdate);
+
+  // =========================================================================
+  // Customer Accounts (ID System), Order History & Two-Way Messaging
+  // =========================================================================
+
+  app.post('/api/customer/register', async (req: Request, res: Response) => {
+    try {
+      const name = String(req.body?.name ?? '').trim().slice(0, 120);
+      const phoneRaw = String(req.body?.phone ?? '').trim().slice(0, 32);
+      const pin = String(req.body?.pin ?? '').trim();
+      const defaultAddress = String(req.body?.default_address ?? '').trim().slice(0, 500);
+      const deliveryZone: 'inside_city' | 'outside_city' =
+        req.body?.delivery_zone === 'outside_city' ? 'outside_city' : 'inside_city';
+
+      const phoneNorm = normalizePhoneKey(phoneRaw);
+      if (!name || name.length < 2) {
+        return res.status(400).json({ ok: false, error: 'Please enter your full name.' });
+      }
+      if (!phoneNorm || phoneNorm.length < 7) {
+        return res.status(400).json({ ok: false, error: 'Please enter a valid mobile number.' });
+      }
+      if (pin.length < 4 || pin.length > 20) {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'Please choose a 4 to 20 character PIN or password.' });
+      }
+
+      const existing = await findCustomerAccountByPhone(phoneNorm);
+      if (existing) {
+        return res.status(409).json({
+          ok: false,
+          error: 'An account with this phone number already exists. Please sign in instead.',
+        });
+      }
+
+      const customerCode = `CID-${Math.floor(10000 + Math.random() * 90000)}`;
+      const accountRecord: StoredCustomerAccount = {
+        id: `cust-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        customer_code: customerCode,
+        name,
+        phone: phoneRaw,
+        phone_normalized: phoneNorm,
+        pin_hash: hashCustomerPin(pin),
+        default_address: defaultAddress,
+        delivery_zone: deliveryZone,
+        created_at: new Date().toISOString(),
+      };
+
+      let saved = accountRecord;
+      const supabase = getServerSupabase();
+      let savedToSupabase = false;
+      if (supabase) {
+        try {
+          const { id: _localId, ...insertPayload } = accountRecord;
+          const { data, error } = await supabase
+            .from('customer_accounts')
+            .insert([insertPayload])
+            .select()
+            .single();
+          if (!error && data) {
+            saved = data as unknown as StoredCustomerAccount;
+            savedToSupabase = true;
+          }
+        } catch {
+          // Fall back to server store
+        }
+      }
+      if (!savedToSupabase) {
+        const store = readServerStore();
+        writeServerStore({
+          ...store,
+          customerAccounts: [saved, ...(store.customerAccounts || [])],
+        });
+      }
+
+      const token = createCustomerToken(saved.id, saved.phone_normalized);
+      const [allOrders, allMessages] = await Promise.all([
+        loadAllOrdersForLookup(),
+        loadAllCustomerMessages(),
+      ]);
+      const orders = allOrders.filter((o) => normalizePhoneKey(o.customer_phone) === phoneNorm);
+      const messages = allMessages.filter((m) => m.customer_phone_normalized === phoneNorm);
+
+      return res.status(201).json({
+        ok: true,
+        token,
+        account: toPublicCustomerAccount(saved),
+        orders,
+        messages,
+      });
+    } catch (err) {
+      console.error('Customer register error:', err);
+      return res.status(500).json({ ok: false, error: 'Unable to create account right now.' });
+    }
+  });
+
+  app.post('/api/customer/login', async (req: Request, res: Response) => {
+    try {
+      const phoneRaw = String(req.body?.phone ?? '').trim();
+      const pin = String(req.body?.pin ?? '').trim();
+      const phoneNorm = normalizePhoneKey(phoneRaw);
+
+      if (!phoneNorm || !pin) {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'Please enter both your phone number and PIN.' });
+      }
+
+      const account = await findCustomerAccountByPhone(phoneNorm);
+      if (!account || !verifyCustomerPin(pin, account.pin_hash)) {
+        return res
+          .status(401)
+          .json({ ok: false, error: 'Invalid phone number or PIN. Please try again.' });
+      }
+
+      const token = createCustomerToken(account.id, account.phone_normalized);
+      const [allOrders, allMessages] = await Promise.all([
+        loadAllOrdersForLookup(),
+        loadAllCustomerMessages(),
+      ]);
+      const orders = allOrders.filter((o) => normalizePhoneKey(o.customer_phone) === phoneNorm);
+      const messages = allMessages.filter((m) => m.customer_phone_normalized === phoneNorm);
+
+      return res.json({
+        ok: true,
+        token,
+        account: toPublicCustomerAccount(account),
+        orders,
+        messages,
+      });
+    } catch (err) {
+      console.error('Customer login error:', err);
+      return res.status(500).json({ ok: false, error: 'Unable to sign in right now.' });
+    }
+  });
+
+  app.get('/api/customer/me', async (req: Request, res: Response) => {
+    const auth = verifyCustomerToken(req);
+    if (!auth) {
+      return res.status(401).json({ ok: false, error: 'Customer session expired.' });
+    }
+    const account = await findCustomerAccountByPhone(auth.phoneNormalized);
+    if (!account) {
+      return res.status(401).json({ ok: false, error: 'Account not found.' });
+    }
+    const [allOrders, allMessages] = await Promise.all([
+      loadAllOrdersForLookup(),
+      loadAllCustomerMessages(),
+    ]);
+    const orders = allOrders.filter(
+      (o) => normalizePhoneKey(o.customer_phone) === auth.phoneNormalized
+    );
+    const messages = allMessages.filter(
+      (m) => m.customer_phone_normalized === auth.phoneNormalized
+    );
+    return res.json({
+      ok: true,
+      account: toPublicCustomerAccount(account),
+      orders,
+      messages,
+    });
+  });
+
+  app.post('/api/customer/track', async (req: Request, res: Response) => {
+    const orderNumber = String(req.body?.order_number ?? '').trim().toUpperCase();
+    const phoneNorm = normalizePhoneKey(String(req.body?.phone ?? ''));
+    if (!orderNumber || !phoneNorm) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Enter both your Order Number (e.g. NCW-...) and Phone Number.',
+      });
+    }
+    const allOrders = await loadAllOrdersForLookup();
+    const match = allOrders.find(
+      (o) =>
+        o.order_number.toUpperCase() === orderNumber &&
+        normalizePhoneKey(o.customer_phone) === phoneNorm
+    );
+    if (!match) {
+      return res.status(404).json({
+        ok: false,
+        error: 'No order matched that Order Number and Phone Number.',
+      });
+    }
+    return res.json({ ok: true, order: match });
+  });
+
+  app.post('/api/customer/messages', async (req: Request, res: Response) => {
+    const auth = verifyCustomerToken(req);
+    if (!auth) {
+      return res.status(401).json({ ok: false, error: 'Please sign in to message Admin.' });
+    }
+    const body = String(req.body?.body ?? '').trim();
+    const orderNumber = String(req.body?.order_number ?? '').trim().slice(0, 64);
+    if (!body) {
+      return res.status(400).json({ ok: false, error: 'Please write a message first.' });
+    }
+    const account = await findCustomerAccountByPhone(auth.phoneNormalized);
+    const customerName = account?.name || auth.phoneNormalized;
+
+    const saved = await appendCustomerMessage({
+      customer_phone_normalized: auth.phoneNormalized,
+      customer_name: customerName,
+      order_number: orderNumber,
+      sender: 'customer',
+      body,
+    });
+
+    // Notify Admin on Telegram if configured
+    const { settings } = await loadActivePaymentSettings();
+    if (settings.telegramBotToken && settings.telegramChatId) {
+      const tgText = [
+        `<b>💬 NEW CUSTOMER MESSAGE</b>`,
+        `<b>👤 From:</b> ${escapeTelegramHtml(customerName)} (${escapeTelegramHtml(
+          account?.phone || auth.phoneNormalized
+        )})`,
+        account?.customer_code
+          ? `<b>🆔 Customer ID:</b> <code>${escapeTelegramHtml(account.customer_code)}</code>`
+          : '',
+        orderNumber ? `<b>📦 Order:</b> ${escapeTelegramHtml(orderNumber)}` : '',
+        '',
+        escapeTelegramHtml(body),
+      ]
+        .filter(Boolean)
+        .join('\n');
+      void sendTelegramMessage(settings.telegramBotToken, settings.telegramChatId, tgText);
+    }
+
+    return res.status(201).json({ ok: true, message: saved });
+  });
+
+  app.post('/api/customer/messages/read', async (req: Request, res: Response) => {
+    const auth = verifyCustomerToken(req);
+    if (!auth) {
+      return res.status(401).json({ ok: false, error: 'Sign in required.' });
+    }
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        await supabase
+          .from('customer_messages')
+          .update({ read_by_customer: true })
+          .eq('customer_phone_normalized', auth.phoneNormalized)
+          .eq('sender', 'admin');
+      } catch {
+        // ignore
+      }
+    }
+    const store = readServerStore();
+    if (store.customerMessages?.length) {
+      const updated = store.customerMessages.map((m) =>
+        m.customer_phone_normalized === auth.phoneNormalized && m.sender === 'admin'
+          ? { ...m, read_by_customer: true }
+          : m
+      );
+      writeServerStore({ ...store, customerMessages: updated });
+    }
+    return res.json({ ok: true });
+  });
+
+  app.get('/api/admin/messages', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    const messages = await loadAllCustomerMessages();
+    return res.json({ ok: true, messages });
+  });
+
+  app.post('/api/admin/messages', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    const phoneNorm = normalizePhoneKey(String(req.body?.customer_phone ?? ''));
+    const customerName = String(req.body?.customer_name ?? 'Customer').trim().slice(0, 120);
+    const orderNumber = String(req.body?.order_number ?? '').trim().slice(0, 64);
+    const body = String(req.body?.body ?? '').trim();
+
+    if (!phoneNorm || !body) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Customer phone and message text are required.' });
+    }
+
+    const saved = await appendCustomerMessage({
+      customer_phone_normalized: phoneNorm,
+      customer_name: customerName,
+      order_number: orderNumber,
+      sender: 'admin',
+      body,
+    });
+
+    // Also mark customer's previous messages in this thread as read by admin
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        await supabase
+          .from('customer_messages')
+          .update({ read_by_admin: true })
+          .eq('customer_phone_normalized', phoneNorm)
+          .eq('sender', 'customer');
+      } catch {
+        // ignore
+      }
+    }
+    const store = readServerStore();
+    if (store.customerMessages?.length) {
+      const updated = store.customerMessages.map((m) =>
+        m.customer_phone_normalized === phoneNorm && m.sender === 'customer'
+          ? { ...m, read_by_admin: true }
+          : m
+      );
+      writeServerStore({ ...store, customerMessages: updated });
+    }
+
+    return res.status(201).json({ ok: true, message: saved });
+  });
+
+  app.post('/api/admin/messages/read', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    const phoneNorm = normalizePhoneKey(String(req.body?.customer_phone ?? ''));
+    if (!phoneNorm) return res.json({ ok: true });
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        await supabase
+          .from('customer_messages')
+          .update({ read_by_admin: true })
+          .eq('customer_phone_normalized', phoneNorm)
+          .eq('sender', 'customer');
+      } catch {
+        // ignore
+      }
+    }
+    const store = readServerStore();
+    if (store.customerMessages?.length) {
+      const updated = store.customerMessages.map((m) =>
+        m.customer_phone_normalized === phoneNorm && m.sender === 'customer'
+          ? { ...m, read_by_admin: true }
+          : m
+      );
+      writeServerStore({ ...store, customerMessages: updated });
+    }
+    return res.json({ ok: true });
+  });
+
+  async function updateCustomerPinHash(phoneNorm: string, newPinHash: string): Promise<boolean> {
+    let updated = false;
+    const supabase = getServerSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('customer_accounts')
+          .update({ pin_hash: newPinHash })
+          .eq('phone_normalized', phoneNorm)
+          .select('id');
+        if (!error && Array.isArray(data) && data.length > 0) {
+          updated = true;
+        }
+      } catch {
+        // fall through to local store
+      }
+    }
+    const store = readServerStore();
+    if (store.customerAccounts?.some((a) => a.phone_normalized === phoneNorm)) {
+      const nextAccounts = store.customerAccounts.map((a) =>
+        a.phone_normalized === phoneNorm ? { ...a, pin_hash: newPinHash } : a
+      );
+      writeServerStore({ ...store, customerAccounts: nextAccounts });
+      updated = true;
+    }
+    return updated;
+  }
+
+  function getActivePinResetRequests(): StoredPinResetRequest[] {
+    const store = readServerStore();
+    const nowMs = Date.now();
+    const active = (store.pinResetRequests || []).filter(
+      (r) => new Date(r.expires_at).getTime() > nowMs
+    );
+    if (active.length !== (store.pinResetRequests || []).length) {
+      writeServerStore({ ...store, pinResetRequests: active });
+    }
+    return active;
+  }
+
+  // Customer Forgot PIN Step 1: Request 6-digit Reset Code (sent to Admin Telegram + Admin Panel)
+  app.post('/api/customer/forgot-pin', async (req: Request, res: Response) => {
+    try {
+      const phoneRaw = String(req.body?.phone ?? '').trim();
+      const phoneNorm = normalizePhoneKey(phoneRaw);
+      if (!phoneNorm || phoneNorm.length < 7) {
+        return res.status(400).json({ ok: false, error: 'Please enter your registered phone number.' });
+      }
+      const account = await findCustomerAccountByPhone(phoneNorm);
+      if (!account) {
+        return res.status(404).json({
+          ok: false,
+          error: 'Ei phone number diye kono account pawa jayni. Notun Customer ID create korun.',
+        });
+      }
+
+      const resetCode = String(crypto.randomInt(100000, 999999));
+      const now = Date.now();
+      const requestRecord: StoredPinResetRequest = {
+        id: `pinr-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        phone_normalized: phoneNorm,
+        phone: account.phone,
+        customer_name: account.name,
+        customer_code: account.customer_code,
+        reset_code: resetCode,
+        created_at: new Date(now).toISOString(),
+        expires_at: new Date(now + 30 * 60 * 1000).toISOString(),
+      };
+
+      const active = getActivePinResetRequests().filter((r) => r.phone_normalized !== phoneNorm);
+      const store = readServerStore();
+      writeServerStore({
+        ...store,
+        pinResetRequests: [requestRecord, ...active].slice(0, 50),
+      });
+
+      // Notify Admin via Telegram Bot immediately with the 6-digit code
+      const { settings } = await loadActivePaymentSettings();
+      if (settings.telegramBotToken && settings.telegramChatId) {
+        const tgHtml = [
+          `<b>🔐 CUSTOMER PIN RESET REQUEST</b>`,
+          `<b>👤 Customer:</b> ${escapeTelegramHtml(account.name)} (<code>${escapeTelegramHtml(
+            account.customer_code
+          )}</code>)`,
+          `<b>📞 Phone:</b> ${escapeTelegramHtml(account.phone)}`,
+          `<b>🔑 6-Digit Reset Code:</b> <code>${resetCode}</code>`,
+          `<i>Valid for 30 minutes. Send this code to the customer's phone via WhatsApp/SMS after verifying them.</i>`,
+        ].join('\n');
+        void sendTelegramMessage(settings.telegramBotToken, settings.telegramChatId, tgHtml);
+      }
+
+      return res.json({
+        ok: true,
+        customer_code: account.customer_code,
+        expires_in_minutes: 30,
+        message:
+          'PIN reset request Admin er kache pathano hoyeche! Admin apnar phone/WhatsApp e 6-digit reset code pathabe — oi code diye notun PIN set korun.',
+      });
+    } catch (err) {
+      console.error('Forgot PIN error:', err);
+      return res.status(500).json({ ok: false, error: 'Could not process PIN reset request.' });
+    }
+  });
+
+  // Customer Forgot PIN Step 2: Verify 6-digit Reset Code + Set New PIN & Auto Sign-In
+  app.post('/api/customer/reset-pin', async (req: Request, res: Response) => {
+    try {
+      const phoneNorm = normalizePhoneKey(String(req.body?.phone ?? ''));
+      const resetCode = String(req.body?.reset_code ?? '').replace(/\s+/g, '').trim();
+      const newPin = String(req.body?.new_pin ?? '').trim();
+
+      if (!phoneNorm || !resetCode) {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'Phone number and 6-digit reset code are required.' });
+      }
+      if (newPin.length < 4 || newPin.length > 20) {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'New PIN must be 4 to 20 characters long.' });
+      }
+
+      const active = getActivePinResetRequests();
+      const match = active.find(
+        (r) => r.phone_normalized === phoneNorm && r.reset_code === resetCode
+      );
+      if (!match) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Invalid or expired 6-digit reset code. Please check the code from Admin or request a new one.',
+        });
+      }
+
+      const account = await findCustomerAccountByPhone(phoneNorm);
+      if (!account) {
+        return res.status(404).json({ ok: false, error: 'Customer account not found.' });
+      }
+
+      const newHash = hashCustomerPin(newPin);
+      const updated = await updateCustomerPinHash(phoneNorm, newHash);
+      if (!updated) {
+        return res.status(500).json({ ok: false, error: 'Could not update PIN right now.' });
+      }
+
+      // Consume the reset code so it cannot be reused
+      const store = readServerStore();
+      writeServerStore({
+        ...store,
+        pinResetRequests: (store.pinResetRequests || []).filter(
+          (r) => r.phone_normalized !== phoneNorm
+        ),
+      });
+
+      const token = createCustomerToken(account.id, account.phone_normalized);
+      const [allOrders, allMessages] = await Promise.all([
+        loadAllOrdersForLookup(),
+        loadAllCustomerMessages(),
+      ]);
+      const orders = allOrders.filter((o) => normalizePhoneKey(o.customer_phone) === phoneNorm);
+      const messages = allMessages.filter((m) => m.customer_phone_normalized === phoneNorm);
+
+      return res.json({
+        ok: true,
+        token,
+        account: toPublicCustomerAccount(account),
+        orders,
+        messages,
+      });
+    } catch (err) {
+      console.error('Reset PIN error:', err);
+      return res.status(500).json({ ok: false, error: 'Unable to reset PIN right now.' });
+    }
+  });
+
+  // Admin: Fetch active customer PIN reset requests
+  app.get('/api/admin/pin-resets', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    return res.json({ ok: true, requests: getActivePinResetRequests() });
+  });
+
+  // Admin: Directly set a temporary new PIN for any customer account
+  app.post('/api/admin/customer/reset-pin', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    const phoneNorm = normalizePhoneKey(String(req.body?.customer_phone ?? ''));
+    const newPin = String(req.body?.new_pin ?? '').trim();
+    if (!phoneNorm) {
+      return res.status(400).json({ ok: false, error: 'Valid customer phone number is required.' });
+    }
+    if (newPin.length < 4 || newPin.length > 20) {
+      return res.status(400).json({ ok: false, error: 'New PIN must be 4 to 20 characters.' });
+    }
+    const account = await findCustomerAccountByPhone(phoneNorm);
+    if (!account) {
+      return res.status(404).json({
+        ok: false,
+        error: 'Ei phone number e kono registered Customer Account nei.',
+      });
+    }
+    const ok = await updateCustomerPinHash(phoneNorm, hashCustomerPin(newPin));
+    if (!ok) {
+      return res.status(500).json({ ok: false, error: 'Failed to update customer PIN.' });
+    }
+    // Clear any pending reset code for this phone
+    const store = readServerStore();
+    writeServerStore({
+      ...store,
+      pinResetRequests: (store.pinResetRequests || []).filter(
+        (r) => r.phone_normalized !== phoneNorm
+      ),
+    });
+
+    return res.json({
+      ok: true,
+      customer_code: account.customer_code,
+      customer_name: account.name,
+      phone: account.phone,
+      new_pin: newPin,
+    });
   });
 
   // Chiko Lens: Visual + Semantic Search against Full Inventory (v1beta)

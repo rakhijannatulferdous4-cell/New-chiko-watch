@@ -11,7 +11,9 @@ import {
   ScanSearch,
   Search,
   ShieldCheck,
+  ShoppingBag,
   SlidersHorizontal,
+  User,
   Volume2,
   VolumeX,
   Watch,
@@ -19,7 +21,10 @@ import {
 import { AnimatePresence, motion, MotionConfig, useScroll, useSpring } from 'motion/react';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminLoginModal } from './components/AdminLoginModal';
+import { CartDrawer } from './components/CartDrawer';
+import { CheckoutModal } from './components/CheckoutModal';
 import { ChikoLensView } from './components/ChikoLensModal';
+import { CustomerAccountModal } from './components/CustomerAccountModal';
 import { DigitalMemoBuilder } from './components/DigitalMemoBuilder';
 import { HeroWatch3D } from './components/HeroWatch3D';
 import { ProductCompareModal } from './components/ProductCompareModal';
@@ -27,6 +32,20 @@ import { ShopChatbot } from './components/ShopChatbot';
 import { StorefrontAmbientCanvas } from './components/StorefrontAmbientCanvas';
 import { WatchCard } from './components/WatchCard';
 import { WatchDetailModal } from './components/WatchDetailModal';
+import {
+  CustomerSessionData,
+  fetchAdminCustomerMessages,
+  fetchAdminPinResets,
+  fetchCustomerSession,
+} from './services/customerStore';
+import {
+  DEFAULT_PAYMENT_SETTINGS,
+  fetchAdminOrders,
+  fetchStorePaymentSettings,
+  loadCachedPaymentSettings,
+  loadLocalCart,
+  saveLocalCart,
+} from './services/orderStore';
 import {
   ADMIN_SESSION_KEY,
   createWatchRecord,
@@ -43,15 +62,22 @@ import { prewarmProductMotionOnline } from './services/cinemaMotionEngine';
 import {
   attachGlobalAestheticTapSounds,
   isGlobalSoundMuted,
+  playOrderAlertChime,
   playUiSound,
   setGlobalSoundMuted,
   subscribeSoundMute,
 } from './services/uiSoundEngine';
 import {
   AppTab,
+  CartItem,
+  CustomerMessage,
+  CustomerOrder,
+  DeliveryZone,
   DigitalMemo,
   MemoLineItem,
+  PinResetRequest,
   ProductCategory,
+  StorePaymentSettings,
   WatchFormInput,
   WatchItem,
 } from './types/watch';
@@ -167,11 +193,40 @@ function StoreApp() {
   const [savedMemos, setSavedMemos] = useState<DigitalMemo[]>([]);
   const [draftMemoItems, setDraftMemoItems] = useState<MemoLineItem[]>([]);
 
+  // E-Commerce Cart, Checkout, Payment Settings & Live Admin Orders state
+  const [cartItems, setCartItems] = useState<CartItem[]>(() => loadLocalCart());
+  const [cartOpen, setCartOpen] = useState(false);
+  const [deliveryZone, setDeliveryZone] = useState<DeliveryZone>('inside_city');
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutItems, setCheckoutItems] = useState<CartItem[]>([]);
+  const [checkoutIsBuyNow, setCheckoutIsBuyNow] = useState(false);
+  const [paymentSettings, setPaymentSettings] = useState<StorePaymentSettings>(() =>
+    loadCachedPaymentSettings() || DEFAULT_PAYMENT_SETTINGS
+  );
+  const [adminOrders, setAdminOrders] = useState<CustomerOrder[]>([]);
+  const [adminMessages, setAdminMessages] = useState<CustomerMessage[]>([]);
+  const [adminPinResets, setAdminPinResets] = useState<PinResetRequest[]>([]);
+  const knownOrderIdsRef = useRef<Set<string>>(new Set());
+  const ordersInitializedRef = useRef(false);
+  const knownCustomerMsgIdsRef = useRef<Set<string>>(new Set());
+  const messagesInitializedRef = useRef(false);
+  const knownPinResetIdsRef = useRef<Set<string>>(new Set());
+
+  // Customer Account / ID Portal state + Account-Required Checkout Gate
+  const [customerSession, setCustomerSession] = useState<CustomerSessionData | null>(null);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [checkoutGateNotice, setCheckoutGateNotice] = useState('');
+  const pendingCheckoutRef = useRef<{ items: CartItem[]; isBuyNow: boolean } | null>(null);
+
   // Chatbot drawer state
   const [chatOpen, setChatOpen] = useState(false);
 
   // Global aesthetic UI & product sound state
   const [soundMuted, setSoundMuted] = useState<boolean>(() => isGlobalSoundMuted());
+
+  useEffect(() => {
+    saveLocalCart(cartItems);
+  }, [cartItems]);
 
   useEffect(() => {
     try {
@@ -275,11 +330,41 @@ function StoreApp() {
           setWatches(result.watches);
           setStorageSource(result.source);
         }
-        const memos = await fetchAdminMemos(validToken);
-        if (active) setSavedMemos(memos);
+        const [memos, loadedSettings, loadedOrders, loadedMessages, loadedPinResets, custSession] =
+          await Promise.all([
+            fetchAdminMemos(validToken),
+            fetchStorePaymentSettings(validToken),
+            fetchAdminOrders(validToken),
+            fetchAdminCustomerMessages(validToken),
+            fetchAdminPinResets(validToken),
+            fetchCustomerSession(),
+          ]);
+        if (active) {
+          setSavedMemos(memos);
+          setPaymentSettings(loadedSettings.settings);
+          setAdminOrders(loadedOrders);
+          setAdminMessages(loadedMessages);
+          setAdminPinResets(loadedPinResets);
+          setCustomerSession(custSession);
+          knownOrderIdsRef.current = new Set(loadedOrders.map((o) => o.id));
+          ordersInitializedRef.current = true;
+          knownCustomerMsgIdsRef.current = new Set(
+            loadedMessages.filter((m) => m.sender === 'customer').map((m) => m.id)
+          );
+          knownPinResetIdsRef.current = new Set(loadedPinResets.map((r) => r.id));
+          messagesInitializedRef.current = true;
+        }
       } else {
         setWatches(result.watches);
         setStorageSource(result.source);
+        const [publicSettings, custSession] = await Promise.all([
+          fetchStorePaymentSettings(),
+          fetchCustomerSession(),
+        ]);
+        if (active) {
+          setPaymentSettings(publicSettings.settings);
+          setCustomerSession(custSession);
+        }
       }
 
       setLoading(false);
@@ -292,16 +377,91 @@ function StoreApp() {
     };
   }, []);
 
+  // Poll for live customer order updates & Admin messages when logged in as customer
+  useEffect(() => {
+    if (!customerSession?.token) return;
+    let cancelled = false;
+    const pollCustomer = async () => {
+      const fresh = await fetchCustomerSession(customerSession.token);
+      if (!cancelled && fresh) {
+        setCustomerSession(fresh);
+      }
+    };
+    const timer = window.setInterval(() => {
+      void pollCustomer();
+    }, 20000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [customerSession?.token]);
+
+  // Poll for live incoming orders, customer messages & PIN reset requests while Admin Mode is active
+  useEffect(() => {
+    if (!isAdmin || !adminToken) return;
+    let cancelled = false;
+
+    const pollAdminData = async () => {
+      const [latestOrders, latestMessages, latestPinResets] = await Promise.all([
+        fetchAdminOrders(adminToken),
+        fetchAdminCustomerMessages(adminToken),
+        fetchAdminPinResets(adminToken),
+      ]);
+      if (cancelled) return;
+      let shouldChime = false;
+      if (ordersInitializedRef.current) {
+        if (latestOrders.some((o) => !knownOrderIdsRef.current.has(o.id))) {
+          shouldChime = true;
+        }
+      }
+      if (messagesInitializedRef.current) {
+        if (
+          latestMessages.some(
+            (m) =>
+              m.sender === 'customer' &&
+              !m.read_by_admin &&
+              !knownCustomerMsgIdsRef.current.has(m.id)
+          ) ||
+          latestPinResets.some((r) => !knownPinResetIdsRef.current.has(r.id))
+        ) {
+          shouldChime = true;
+        }
+      }
+      if (shouldChime) {
+        playOrderAlertChime();
+      }
+      knownOrderIdsRef.current = new Set(latestOrders.map((o) => o.id));
+      ordersInitializedRef.current = true;
+      knownCustomerMsgIdsRef.current = new Set(
+        latestMessages.filter((m) => m.sender === 'customer').map((m) => m.id)
+      );
+      knownPinResetIdsRef.current = new Set(latestPinResets.map((r) => r.id));
+      messagesInitializedRef.current = true;
+      setAdminOrders(latestOrders);
+      setAdminMessages(latestMessages);
+      setAdminPinResets(latestPinResets);
+    };
+
+    const timer = window.setInterval(() => {
+      void pollAdminData();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [isAdmin, adminToken]);
+
   const hydratedWatches = watches;
 
-  // 5-Tap Rapid Gesture on header logo triggers Admin Login modal
+  // Secret Triple-Tap Rapid Gesture on header logo triggers Admin Login modal
   const handleLogoTap = () => {
     const now = Date.now();
-    const recent = logoTapsRef.current.filter((t) => now - t < 2000);
+    const recent = logoTapsRef.current.filter((t) => now - t < 1600);
     recent.push(now);
     logoTapsRef.current = recent;
 
-    if (recent.length >= 5) {
+    if (recent.length >= 3) {
       logoTapsRef.current = [];
       if (isAdmin) {
         setActiveTab('admin');
@@ -335,16 +495,32 @@ function StoreApp() {
       if (localItems.length > 0) {
         uploadedCount = await syncLocalWatchesToCloud(localItems, token);
       }
-      const [refreshed, memos] = await Promise.all([
-        fetchWatches(token),
-        fetchAdminMemos(token),
-      ]);
+      const [refreshed, memos, loadedSettings, loadedOrders, loadedMessages, loadedPinResets] =
+        await Promise.all([
+          fetchWatches(token),
+          fetchAdminMemos(token),
+          fetchStorePaymentSettings(token),
+          fetchAdminOrders(token),
+          fetchAdminCustomerMessages(token),
+          fetchAdminPinResets(token),
+        ]);
       setWatches(refreshed.watches);
       setStorageSource(refreshed.source);
       if (refreshed.error) {
         setCloudError(refreshed.error);
       }
       setSavedMemos(memos);
+      setPaymentSettings(loadedSettings.settings);
+      setAdminOrders(loadedOrders);
+      setAdminMessages(loadedMessages);
+      setAdminPinResets(loadedPinResets);
+      knownOrderIdsRef.current = new Set(loadedOrders.map((o) => o.id));
+      ordersInitializedRef.current = true;
+      knownCustomerMsgIdsRef.current = new Set(
+        loadedMessages.filter((m) => m.sender === 'customer').map((m) => m.id)
+      );
+      knownPinResetIdsRef.current = new Set(loadedPinResets.map((r) => r.id));
+      messagesInitializedRef.current = true;
       if (uploadedCount > 0) {
         setCloudNotice(
           `Published ${uploadedCount} existing local product(s) so everyone can see them.`
@@ -359,6 +535,14 @@ function StoreApp() {
     setIsAdmin(false);
     setAdminToken('');
     setSavedMemos([]);
+    setAdminOrders([]);
+    setAdminMessages([]);
+    setAdminPinResets([]);
+    ordersInitializedRef.current = false;
+    knownOrderIdsRef.current = new Set();
+    messagesInitializedRef.current = false;
+    knownCustomerMsgIdsRef.current = new Set();
+    knownPinResetIdsRef.current = new Set();
     setDraftMemoItems([]);
     setCloudNotice('');
     setCloudError('');
@@ -371,6 +555,9 @@ function StoreApp() {
     void fetchWatches().then((res) => {
       setWatches(res.watches);
       setStorageSource(res.source);
+    });
+    void fetchStorePaymentSettings().then((res) => {
+      setPaymentSettings(res.settings);
     });
   };
 
@@ -581,6 +768,238 @@ function StoreApp() {
     setSavedMemos(updated);
   };
 
+  // E-Commerce Cart & Checkout handlers
+  const cartCount = useMemo(
+    () => cartItems.reduce((sum, item) => sum + item.quantity, 0),
+    [cartItems]
+  );
+
+  const pendingOrdersCount = useMemo(
+    () => adminOrders.filter((o) => o.status === 'Pending').length,
+    [adminOrders]
+  );
+
+  const unreadAdminMessagesCount = useMemo(
+    () => adminMessages.filter((m) => m.sender === 'customer' && !m.read_by_admin).length,
+    [adminMessages]
+  );
+
+  const adminTotalAlerts = pendingOrdersCount + unreadAdminMessagesCount + adminPinResets.length;
+
+  const unreadCustomerMessagesCount = useMemo(
+    () =>
+      (customerSession?.messages || []).filter(
+        (m) => m.sender === 'admin' && !m.read_by_customer
+      ).length,
+    [customerSession?.messages]
+  );
+
+  const handleAddToCart = useCallback((watch: WatchItem) => {
+    if (watch.stock_count <= 0) return;
+    setCartItems((prev) => {
+      const existing = prev.find((i) => i.watchId === watch.id);
+      if (existing) {
+        return prev.map((i) =>
+          i.watchId === watch.id
+            ? {
+                ...i,
+                maxStock: Math.max(1, watch.stock_count),
+                unitPrice: watch.min_selling_price,
+                quantity: Math.min(Math.max(1, watch.stock_count), i.quantity + 1),
+              }
+            : i
+        );
+      }
+      return [
+        ...prev,
+        {
+          watchId: watch.id,
+          product_name: watch.product_name,
+          brand: watch.brand,
+          model: watch.model,
+          color: watch.color,
+          image_url: watch.image_url,
+          unitPrice: watch.min_selling_price,
+          maxStock: Math.max(1, watch.stock_count),
+          quantity: 1,
+        },
+      ];
+    });
+  }, []);
+
+  const handleUpdateCartQty = useCallback((watchId: string, delta: number) => {
+    setCartItems((prev) =>
+      prev
+        .map((item) => {
+          if (item.watchId !== watchId) return item;
+          const nextQty = Math.min(item.maxStock, item.quantity + delta);
+          return { ...item, quantity: nextQty };
+        })
+        .filter((item) => item.quantity > 0)
+    );
+  }, []);
+
+  const handleRemoveCartItem = useCallback((watchId: string) => {
+    setCartItems((prev) => prev.filter((item) => item.watchId !== watchId));
+  }, []);
+
+  const handleClearCart = useCallback(() => {
+    setCartItems([]);
+  }, []);
+
+  const handleBuyNow = useCallback(
+    (watch: WatchItem) => {
+      if (watch.stock_count <= 0) return;
+      const singleItem: CartItem = {
+        watchId: watch.id,
+        product_name: watch.product_name,
+        brand: watch.brand,
+        model: watch.model,
+        color: watch.color,
+        image_url: watch.image_url,
+        unitPrice: watch.min_selling_price,
+        maxStock: Math.max(1, watch.stock_count),
+        quantity: 1,
+      };
+      setCartOpen(false);
+      if (!customerSession) {
+        pendingCheckoutRef.current = { items: [singleItem], isBuyNow: true };
+        setCheckoutGateNotice(
+          'Order place korar age apnar Customer Account create ba Sign In korun — login korlei direct checkout e niye jabe!'
+        );
+        setCustomerModalOpen(true);
+        return;
+      }
+      setCheckoutItems([singleItem]);
+      setCheckoutIsBuyNow(true);
+      setCheckoutOpen(true);
+    },
+    [customerSession]
+  );
+
+  const handleProceedToCheckout = useCallback(() => {
+    if (cartItems.length === 0) return;
+    setCartOpen(false);
+    if (!customerSession) {
+      pendingCheckoutRef.current = { items: cartItems, isBuyNow: false };
+      setCheckoutGateNotice(
+        'Order confirm korar age apnar Customer Account create ba Sign In korun — login korlei direct checkout open hobe!'
+      );
+      setCustomerModalOpen(true);
+      return;
+    }
+    setCheckoutItems(cartItems);
+    setCheckoutIsBuyNow(false);
+    setCheckoutOpen(true);
+  }, [cartItems, customerSession]);
+
+  const handleCustomerSessionChange = useCallback((next: CustomerSessionData | null) => {
+    setCustomerSession(next);
+    if (next && pendingCheckoutRef.current) {
+      const queued = pendingCheckoutRef.current;
+      pendingCheckoutRef.current = null;
+      setCheckoutGateNotice('');
+      setCustomerModalOpen(false);
+      setCheckoutItems(queued.items);
+      setCheckoutIsBuyNow(queued.isBuyNow);
+      setCheckoutOpen(true);
+    }
+  }, []);
+
+  const handleOrderSuccess = useCallback(
+    (order: CustomerOrder) => {
+      if (!checkoutIsBuyNow) {
+        setCartItems([]);
+      }
+      if (isAdmin) {
+        knownOrderIdsRef.current.add(order.id);
+        setAdminOrders((prev) => [order, ...prev.filter((o) => o.id !== order.id)]);
+        playOrderAlertChime();
+      }
+      if (customerSession?.token) {
+        void fetchCustomerSession(customerSession.token).then((fresh) => {
+          if (fresh) setCustomerSession(fresh);
+        });
+      }
+    },
+    [checkoutIsBuyNow, isAdmin, customerSession?.token]
+  );
+
+  const handleRefreshAdminOrders = useCallback(async () => {
+    if (!adminToken) return;
+    const [latest, latestMsgs, latestResets] = await Promise.all([
+      fetchAdminOrders(adminToken),
+      fetchAdminCustomerMessages(adminToken),
+      fetchAdminPinResets(adminToken),
+    ]);
+    knownOrderIdsRef.current = new Set(latest.map((o) => o.id));
+    knownPinResetIdsRef.current = new Set(latestResets.map((r) => r.id));
+    setAdminOrders(latest);
+    setAdminMessages(latestMsgs);
+    setAdminPinResets(latestResets);
+  }, [adminToken]);
+
+  const handleAdminOrderUpdated = useCallback(
+    (updated: CustomerOrder) => {
+      setAdminOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      if (adminToken) {
+        void fetchAdminCustomerMessages(adminToken).then((msgs) => setAdminMessages(msgs));
+      }
+    },
+    [adminToken]
+  );
+
+  const handleRefreshAdminMessages = useCallback(async () => {
+    if (!adminToken) return;
+    const latest = await fetchAdminCustomerMessages(adminToken);
+    knownCustomerMsgIdsRef.current = new Set(
+      latest.filter((m) => m.sender === 'customer').map((m) => m.id)
+    );
+    setAdminMessages(latest);
+  }, [adminToken]);
+
+  const handleRefreshAdminPinResets = useCallback(async () => {
+    if (!adminToken) return;
+    const latest = await fetchAdminPinResets(adminToken);
+    knownPinResetIdsRef.current = new Set(latest.map((r) => r.id));
+    setAdminPinResets(latest);
+  }, [adminToken]);
+
+  const handleAdminMessageSent = useCallback((msg: CustomerMessage) => {
+    setAdminMessages((prev) => [...prev.filter((m) => m.id !== msg.id), msg]);
+  }, []);
+
+  const handleAdminThreadMarkedRead = useCallback((phoneNormalized: string) => {
+    setAdminMessages((prev) =>
+      prev.map((m) =>
+        m.customer_phone_normalized === phoneNormalized && m.sender === 'customer'
+          ? { ...m, read_by_admin: true }
+          : m
+      )
+    );
+  }, []);
+
+  const handleConvertOrderToMemo = useCallback(
+    (order: CustomerOrder) => {
+      if (!isAdmin) return;
+      const mapped: MemoLineItem[] = order.items.map((item) => {
+        const matched = hydratedWatches.find((w) => w.id === item.watchId);
+        return {
+          watchId: item.watchId,
+          brand: item.brand,
+          model: item.model || item.productName,
+          color: item.color || 'Standard',
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          realCost: matched?.real_buying_price ?? 0,
+        };
+      });
+      setDraftMemoItems(mapped);
+      setActiveTab('memo');
+    },
+    [isAdmin, hydratedWatches]
+  );
+
   const handleNavClick = (tab: AppTab) => {
     if ((tab === 'admin' || tab === 'memo') && !isAdmin) {
       setLoginOpen(true);
@@ -680,13 +1099,18 @@ function StoreApp() {
                 <button
                   type="button"
                   onClick={() => handleNavClick('admin')}
-                  className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                  className={`relative py-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'admin'
                       ? 'text-[#09090B] font-semibold'
                       : 'text-zinc-500 hover:text-[#09090B]'
                   }`}
                 >
-                  Inventory
+                  <span>Inventory</span>
+                  {adminTotalAlerts > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white font-mono-num text-[10px] font-bold leading-none animate-pulse">
+                      {adminTotalAlerts}
+                    </span>
+                  )}
                   {activeTab === 'admin' && (
                     <motion.span
                       layoutId="desktop-nav-underline"
@@ -699,8 +1123,50 @@ function StoreApp() {
             )}
           </nav>
 
-          {/* Zone 3: Sound Toggle + Primary Action */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Zone 3: Customer Account + Cart Button + Sound Toggle + Primary Action */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <motion.button
+              type="button"
+              onClick={() => setCustomerModalOpen(true)}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+              className="relative min-h-[38px] min-w-[38px] px-2 sm:px-2.5 rounded-lg border border-stone-200 bg-white text-zinc-800 hover:text-zinc-950 hover:bg-stone-50 flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0"
+              aria-label="Open Customer Account and Order History"
+              title={
+                customerSession
+                  ? `${customerSession.account.name} (${customerSession.account.customer_code})`
+                  : 'Customer Account & Order Status'
+              }
+            >
+              <User size={16} />
+              <span className="hidden sm:inline text-xs font-semibold max-w-[90px] truncate">
+                {customerSession ? customerSession.account.customer_code : 'Account'}
+              </span>
+              {unreadCustomerMessagesCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white font-mono-num text-[10px] font-bold flex items-center justify-center shadow-xs animate-pulse">
+                  {unreadCustomerMessagesCount}
+                </span>
+              )}
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={() => setCartOpen(true)}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+              className="relative min-h-[38px] min-w-[38px] px-2 sm:px-2.5 rounded-lg border border-stone-200 bg-white text-zinc-800 hover:text-zinc-950 hover:bg-stone-50 flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0"
+              aria-label={`Open shopping cart (${cartCount} items)`}
+              title="Shopping Bag"
+            >
+              <ShoppingBag size={16} />
+              <span className="hidden sm:inline text-xs font-semibold">Cart</span>
+              {cartCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#09090B] text-white font-mono-num text-[10px] font-bold flex items-center justify-center shadow-xs">
+                  {cartCount}
+                </span>
+              )}
+            </motion.button>
             <motion.button
               type="button"
               data-sound="none"
@@ -726,7 +1192,7 @@ function StoreApp() {
               whileHover={{ scale: 1.04 }}
               whileTap={{ scale: 0.9 }}
               transition={{ type: 'spring', stiffness: 420, damping: 22 }}
-              className="min-h-[38px] px-4 rounded-lg bg-[#09090B] text-white text-xs font-semibold hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
+              className="min-h-[38px] px-3.5 sm:px-4 rounded-lg bg-[#09090B] text-white text-xs font-semibold hover:bg-zinc-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer shadow-xs"
             >
               Ask Concierge
             </motion.button>
@@ -1194,7 +1660,10 @@ function StoreApp() {
                         index={idx}
                         isAdmin={isAdmin}
                         isSaved={savedIds.includes(watch.id)}
+                        inCartQty={cartItems.find((i) => i.watchId === watch.id)?.quantity ?? 0}
                         onToggleSave={toggleSaveWatch}
+                        onAddToCart={handleAddToCart}
+                        onBuyNow={handleBuyNow}
                         onSelect={setSelectedWatch}
                         onAdjustStock={handleAdjustStock}
                         onEdit={(w) => {
@@ -1252,6 +1721,10 @@ function StoreApp() {
               <AdminDashboard
                 watches={hydratedWatches}
                 savedMemos={savedMemos}
+                orders={adminOrders}
+                customerMessages={adminMessages}
+                pinResetRequests={adminPinResets}
+                paymentSettings={paymentSettings}
                 adminUsername={adminUsername}
                 adminToken={adminToken}
                 storageSource={storageSource}
@@ -1265,6 +1738,14 @@ function StoreApp() {
                 onDeleteWatch={handleDeleteWatch}
                 onAdjustStock={handleAdjustStock}
                 onAddToMemo={handleAddToMemo}
+                onRefreshOrders={handleRefreshAdminOrders}
+                onOrderUpdated={handleAdminOrderUpdated}
+                onRefreshMessages={handleRefreshAdminMessages}
+                onRefreshPinResets={handleRefreshAdminPinResets}
+                onMessageSent={handleAdminMessageSent}
+                onThreadMarkedRead={handleAdminThreadMarkedRead}
+                onPaymentSettingsSaved={setPaymentSettings}
+                onConvertOrderToMemo={handleConvertOrderToMemo}
               />
             </motion.div>
           )}
@@ -1463,12 +1944,19 @@ function StoreApp() {
                 className="absolute top-0 left-1/5 right-1/5 h-[3px] bg-[#09090B] rounded-b-full"
               />
             )}
-            <ShieldCheck
-              size={18}
-              className={`transition-transform duration-200 ${
-                activeTab === 'admin' ? 'scale-120 -translate-y-0.5' : 'scale-100'
-              }`}
-            />
+            <div className="relative">
+              <ShieldCheck
+                size={18}
+                className={`transition-transform duration-200 ${
+                  activeTab === 'admin' ? 'scale-120 -translate-y-0.5' : 'scale-100'
+                }`}
+              />
+              {adminTotalAlerts > 0 && (
+                <span className="absolute -top-1.5 -right-2.5 min-w-[15px] h-[15px] px-1 rounded-full bg-rose-600 text-white font-mono-num text-[9px] font-bold flex items-center justify-center animate-pulse">
+                  {adminTotalAlerts}
+                </span>
+              )}
+            </div>
             <span className="text-[10px] tracking-tight">Admin</span>
           </motion.button>
         ) : (
@@ -1492,7 +1980,52 @@ function StoreApp() {
         )}
       </nav>
 
-      {/* Modals & Floating Chatbot */}
+      {/* Modals, Cart Drawer & Floating Chatbot */}
+      <CartDrawer
+        isOpen={cartOpen}
+        items={cartItems}
+        deliveryZone={deliveryZone}
+        paymentSettings={paymentSettings}
+        onChangeZone={setDeliveryZone}
+        onUpdateQty={handleUpdateCartQty}
+        onRemoveItem={handleRemoveCartItem}
+        onClearCart={handleClearCart}
+        onClose={() => setCartOpen(false)}
+        onProceedToCheckout={handleProceedToCheckout}
+      />
+
+      <AnimatePresence>
+        {checkoutOpen && checkoutItems.length > 0 && (
+          <CheckoutModal
+            key="checkout-modal"
+            items={checkoutItems}
+            initialZone={deliveryZone}
+            paymentSettings={paymentSettings}
+            isBuyNow={checkoutIsBuyNow}
+            customerAccount={customerSession?.account || null}
+            onOpenCustomerAccount={() => setCustomerModalOpen(true)}
+            onClose={() => setCheckoutOpen(false)}
+            onOrderSuccess={handleOrderSuccess}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {customerModalOpen && (
+          <CustomerAccountModal
+            key="customer-account-modal"
+            session={customerSession}
+            checkoutGateMessage={checkoutGateNotice}
+            onClose={() => {
+              setCustomerModalOpen(false);
+              setCheckoutGateNotice('');
+              pendingCheckoutRef.current = null;
+            }}
+            onSessionChange={handleCustomerSessionChange}
+          />
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {selectedWatch && (
           <WatchDetailModal
@@ -1500,7 +2033,10 @@ function StoreApp() {
             watch={selectedWatch}
             isAdmin={isAdmin}
             isSaved={savedIds.includes(selectedWatch.id)}
+            inCartQty={cartItems.find((i) => i.watchId === selectedWatch.id)?.quantity ?? 0}
             onToggleSave={toggleSaveWatch}
+            onAddToCart={handleAddToCart}
+            onBuyNow={handleBuyNow}
             onClose={() => setSelectedWatch(null)}
             onAddToMemo={handleAddToMemo}
           />
