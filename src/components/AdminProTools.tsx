@@ -19,7 +19,10 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { prewarmProductMotionOnline } from '../services/cinemaMotionEngine';
+import {
+  clearMotionProfileCache,
+  prewarmProductMotionOnline,
+} from '../services/cinemaMotionEngine';
 import {
   CloudinaryStatusInfo,
   uploadDataUrlToCloudinary,
@@ -1202,11 +1205,17 @@ export function AdminMediaCenterView({
   const handlePrewarmAllAnimations = async () => {
     if (watches.length === 0 || prewarming) return;
     setPrewarming(true);
+    setMigrateNotice('');
     setPrewarmProgress({ done: 0, total: watches.length });
+    clearMotionProfileCache();
     let done = 0;
+    let visionCount = 0;
     for (const w of watches) {
       try {
-        await prewarmProductMotionOnline(w);
+        const res = await prewarmProductMotionOnline(w, true);
+        if (res?.source === 'gemini-vision') {
+          visionCount += 1;
+        }
       } catch {
         // continue
       }
@@ -1214,6 +1223,9 @@ export function AdminMediaCenterView({
       setPrewarmProgress({ done, total: watches.length });
     }
     setPrewarming(false);
+    setMigrateNotice(
+      `AI Vision freshly analyzed ${done} product(s) (${visionCount} via Gemini Vision) and updated their automatic animations!`
+    );
   };
 
   const isConnected = Boolean(cloudinaryStatus?.configured);
@@ -1408,7 +1420,7 @@ export function AdminMediaCenterView({
           ) : (
             <>
               <Sparkles size={14} />
-              <span>Pre-Warm All Animations</span>
+              <span>Re-Analyze All with AI</span>
             </>
           )}
         </button>

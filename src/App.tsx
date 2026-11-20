@@ -673,12 +673,12 @@ function StoreApp() {
     setStorageSource(source);
     const createdWatch = updated.find((w) => !prevIds.has(w.id)) || updated[0];
     if (createdWatch) {
-      // Automatically search online and build custom product animation profile for newly added items
-      void prewarmProductMotionOnline(createdWatch);
+      // Automatically analyze photo + specs with Gemini Vision and build custom animation profile for newly added items
+      void prewarmProductMotionOnline(createdWatch, true);
     }
     if (syncedToCloud) {
       setCloudError('');
-      setCloudNotice('Product saved and published live — visible to everyone on any device.');
+      setCloudNotice('Product saved and published live — AI auto-animation generated automatically.');
     } else {
       setCloudNotice('');
       setCloudError(
@@ -701,7 +701,7 @@ function StoreApp() {
     }
     const refreshed = updated.find((w) => w.id === id) || null;
     if (refreshed) {
-      void prewarmProductMotionOnline(refreshed);
+      void prewarmProductMotionOnline(refreshed, true);
     }
     if (selectedWatch?.id === id) {
       setSelectedWatch(refreshed);
@@ -948,6 +948,11 @@ function StoreApp() {
     },
     [adminToken]
   );
+
+  const handleAdminOrderDeleted = useCallback((orderId: string) => {
+    knownOrderIdsRef.current.delete(orderId);
+    setAdminOrders((prev) => prev.filter((o) => o.id !== orderId));
+  }, []);
 
   const handleRefreshAdminMessages = useCallback(async () => {
     if (!adminToken) return;
@@ -1740,6 +1745,7 @@ function StoreApp() {
                 onAddToMemo={handleAddToMemo}
                 onRefreshOrders={handleRefreshAdminOrders}
                 onOrderUpdated={handleAdminOrderUpdated}
+                onOrderDeleted={handleAdminOrderDeleted}
                 onRefreshMessages={handleRefreshAdminMessages}
                 onRefreshPinResets={handleRefreshAdminPinResets}
                 onMessageSent={handleAdminMessageSent}

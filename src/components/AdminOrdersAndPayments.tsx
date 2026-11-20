@@ -20,6 +20,7 @@ import {
   Send,
   ShieldCheck,
   Smartphone,
+  Trash2,
   Truck,
   X,
   XCircle,
@@ -32,6 +33,7 @@ import {
   sendAdminMessageToCustomer,
 } from '../services/customerStore';
 import {
+  deleteAdminOrder,
   saveStorePaymentSettings,
   sendTestTelegramAlert,
   updateOrderStatus,
@@ -58,6 +60,7 @@ interface AdminOrdersViewProps {
   loading?: boolean;
   onRefreshOrders: () => Promise<void>;
   onOrderUpdated: (updated: CustomerOrder) => void;
+  onOrderDeleted?: (orderId: string) => void;
   onMessageSent?: (msg: CustomerMessage) => void;
   onThreadMarkedRead?: (phoneNormalized: string) => void;
   onConvertOrderToMemo?: (order: CustomerOrder) => void;
@@ -111,6 +114,7 @@ export function AdminOrdersView({
   loading = false,
   onRefreshOrders,
   onOrderUpdated,
+  onOrderDeleted,
   onMessageSent,
   onThreadMarkedRead,
   onConvertOrderToMemo,
@@ -118,6 +122,8 @@ export function AdminOrdersView({
   const [statusFilter, setStatusFilter] = useState<'All' | OrderStatus>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const [confirmDeleteOrderId, setConfirmDeleteOrderId] = useState<string | null>(null);
   const [copiedTrx, setCopiedTrx] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null);
@@ -127,6 +133,12 @@ export function AdminOrdersView({
   const [openChatOrderId, setOpenChatOrderId] = useState<string | null>(null);
   const [orderChatDraft, setOrderChatDraft] = useState('');
   const [sendingOrderMsg, setSendingOrderMsg] = useState(false);
+
+  useEffect(() => {
+    if (!confirmDeleteOrderId) return;
+    const timer = window.setTimeout(() => setConfirmDeleteOrderId(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [confirmDeleteOrderId]);
 
   const stats = useMemo(() => {
     const activeOrders = orders.filter((o) => o.status !== 'Rejected');
@@ -177,6 +189,27 @@ export function AdminOrdersView({
       console.error('Status update failed:', err);
     } finally {
       setBusyOrderId(null);
+    }
+  };
+
+  const handleDeleteOrder = async (order: CustomerOrder) => {
+    if (deletingOrderId) return;
+    setDeletingOrderId(order.id);
+    setActionError('');
+    setActionNotice('');
+    try {
+      await deleteAdminOrder(order.id, adminToken);
+      setConfirmDeleteOrderId(null);
+      if (rejectingOrderId === order.id) setRejectingOrderId(null);
+      if (openChatOrderId === order.id) setOpenChatOrderId(null);
+      onOrderDeleted?.(order.id);
+      setActionNotice(`Order ${order.order_number} permanently deleted.`);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Failed to delete order. Please try again.'
+      );
+    } finally {
+      setDeletingOrderId(null);
     }
   };
 
@@ -517,6 +550,45 @@ export function AdminOrdersView({
                       >
                         <ReceiptText size={12} />
                         <span>Memo</span>
+                      </button>
+                    )}
+                    {confirmDeleteOrderId === order.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={deletingOrderId === order.id}
+                          onClick={() => void handleDeleteOrder(order)}
+                          className="min-h-[32px] px-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs"
+                          aria-label={`Confirm delete order ${order.order_number}`}
+                        >
+                          {deletingOrderId === order.id ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={12} />
+                          )}
+                          <span>Confirm Delete</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={deletingOrderId === order.id}
+                          onClick={() => setConfirmDeleteOrderId(null)}
+                          className="min-h-[32px] px-2 rounded-lg border border-zinc-300 bg-white text-zinc-700 text-[11px] font-semibold hover:bg-zinc-50 cursor-pointer"
+                          aria-label="Cancel delete order"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busyOrderId === order.id || deletingOrderId === order.id}
+                        onClick={() => setConfirmDeleteOrderId(order.id)}
+                        className="min-h-[32px] px-2.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 text-[11px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50 transition-colors"
+                        title="Delete order from list"
+                        aria-label={`Delete order ${order.order_number}`}
+                      >
+                        <Trash2 size={12} />
+                        <span>Delete</span>
                       </button>
                     )}
                   </div>

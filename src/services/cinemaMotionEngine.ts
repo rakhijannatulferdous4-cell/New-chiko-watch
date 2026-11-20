@@ -26,9 +26,11 @@ export interface ProductMotionProfile {
   isTwilight: boolean;
   verifiedOnline?: boolean;
   verifiedProductType?: string;
+  specBadge?: string;
+  source?: string;
 }
 
-const MOTION_CACHE_KEY = 'new_chiko_motion_online_cache_v3';
+const MOTION_CACHE_KEY = 'new_chiko_motion_online_cache_v4';
 const inFlightLookups = new Map<string, Promise<ProductMotionProfile>>();
 
 export function buildMotionSignature(watch: WatchItem): string {
@@ -53,6 +55,10 @@ export function buildProfileForKind(
     title?: string;
     activeLabel?: string;
     tap2Prompt?: string;
+    accentHex?: string;
+    secondaryHex?: string;
+    specBadge?: string;
+    source?: string;
     verifiedOnline?: boolean;
     verifiedProductType?: string;
   }
@@ -149,25 +155,38 @@ export function buildProfileForKind(
   };
 
   const base = baseByKind[actionKind];
+  const validHex = (val?: string) =>
+    val && /^#[0-9a-fA-F]{6}$/.test(val.trim()) ? val.trim() : '';
+
   return {
     ...base,
     title: overrides?.title?.trim() || base.title,
     activeLabel: overrides?.activeLabel?.trim() || base.activeLabel,
     tap2Prompt: overrides?.tap2Prompt?.trim() || base.tap2Prompt,
+    accentHex: validHex(overrides?.accentHex) || base.accentHex,
+    secondaryHex: validHex(overrides?.secondaryHex) || base.secondaryHex,
+    specBadge: overrides?.specBadge?.trim() || undefined,
+    source: overrides?.source?.trim() || undefined,
     verifiedOnline: overrides?.verifiedOnline,
     verifiedProductType: overrides?.verifiedProductType,
   };
 }
 
 /**
- * Instant local product classifier (0ms) — strictly checks vapes, liquids, audio, fans,
- * lights, and watches BEFORE power banks so devices with Type-C / mAh batteries never get hijacked as chargers!
+ * Instant local product classifier (0ms) — checks PRIMARY product identity
+ * (product_name, brand, model, category) FIRST so compatibility notes in description
+ * (like "charges earbuds/speakers/watch" or "built-in LED light") NEVER hijack a Power Bank!
  */
 export function resolveProductMotionProfile(watch: WatchItem): ProductMotionProfile {
   const cached = loadCachedMotionProfile(buildMotionSignature(watch));
   if (cached) return cached;
 
-  const haystack = [
+  const primary = [watch.product_name, watch.brand, watch.model, watch.category]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  const fullHaystack = [
     watch.product_name,
     watch.brand,
     watch.model,
@@ -181,78 +200,102 @@ export function resolveProductMotionProfile(watch: WatchItem): ProductMotionProf
     .join(' ')
     .toLowerCase();
 
-  // 1. Vapor / Vape / Pod / Disposable / Humidifier / Diffuser (STRICTLY FIRST — never hijacked by mAh or Type-C!)
-  if (
-    /\b(vape|vaping|pod|pods|pod\s*kit|pod\s*system|puff|puffs|e-cig|ecig|smoke|vapor|vapour|oxva|xlim|voopoo|argus|drag|uwell|caliburn|vaporesso|xros|smok|nord|rpm|elfbar|elf\s*bar|vozol|waka|iget|nasty|geekbar|geek\s*bar|lost\s*mary|relx|juul|e-liquid|eliquid|nic\s*salt|salt\s*nic|mesh\s*coil|cartridge|disposable\s*bar|shisha|hookah|humidifier|diffuser|aroma|steamer)\b/.test(
-      haystack
-    )
-  ) {
-    return buildProfileForKind('vapor');
+  const classifyText = (text: string, checkCategory: boolean): ProductActionKind | null => {
+    // 1. Vapor / Vape / Pod / Disposable / Humidifier / Diffuser (STRICTLY FIRST — never hijacked by mAh or Type-C!)
+    if (
+      /\b(vape|vaping|pod|pods|pod\s*kit|pod\s*system|prelled\s*pod|puff|puffs|e-cig|ecig|smoke|vapor|vapour|oxva|xlim|voopoo|argus|drag|uwell|caliburn|vaporesso|xros|smok|nord|rpm|elfbar|elf\s*bar|vozol|d-breath|waka|iget|nasty|geekbar|geek\s*bar|lost\s*mary|relx|juul|e-liquid|eliquid|nic\s*salt|salt\s*nic|mesh\s*coil|cartridge|disposable\s*bar|shisha|hookah|humidifier|diffuser|aroma|steamer)\b/.test(
+        text
+      )
+    ) {
+      return 'vapor';
+    }
+
+    // 2. Power Bank / Dedicated Charger / Cable / Adapter (checked BEFORE audio/light on primary identity!)
+    if (
+      /\b(power\s*bank|powerbank|wall\s*charger|fast\s*charger|gan\s*charger|charging\s*adapter|power\s*adapter|travel\s*adapter|charging\s*cable|data\s*cable|magsafe\s*battery|battery\s*pack|anker\s*powercore|car\s*charger|portable\s*charger|charger)\b/.test(
+        text
+      ) ||
+      (checkCategory &&
+        (watch.category === 'Power Banks' || watch.category === 'Chargers & Cables'))
+    ) {
+      return 'power';
+    }
+
+    // 3. Liquid / Water Bottle / Flask / Tumbler / Perfume / Spray
+    if (
+      /\b(water\s*bottle|bottle|botol|pani|panir|flask|thermos|tumbler|sipper|mug|cup|hydration|stanley|hydro\s*flask|perfume|attar|cologne|eau\s*de|mist\s*spray|spray\s*bottle|shampoo|serum)\b/.test(
+        text
+      )
+    ) {
+      return 'liquid';
+    }
+
+    // 4. Audio / Bluetooth Speakers / TWS Earbuds / Neckbands / Headphones
+    if (
+      /\b(speaker|bluetooth\s*speaker|soundbar|sound\s*box|soundbox|woofer|subwoofer|ktx|jbl|earbud|earphone|tws|airpod|headphone|headset|neckband|mic|microphone|audio|bass)\b/.test(
+        text
+      ) ||
+      (checkCategory &&
+        (watch.category === 'Bluetooth Speakers' ||
+          watch.category === 'TWS Earbuds' ||
+          watch.category === 'Neckbands'))
+    ) {
+      return 'audio';
+    }
+
+    // 5. Cooling Fan / Mini Fan / Air Cooler / Hair Dryer
+    if (
+      /\b(fan|mini\s*fan|neck\s*fan|desk\s*fan|cooler|air\s*purifier|blower|hair\s*dryer|breeze)\b/.test(
+        text
+      )
+    ) {
+      return 'fan';
+    }
+
+    // 6. Lights / Flashlights / Desk Lamps / Ring Lights / Lanterns
+    if (
+      /\b(light|lamp|torch|flashlight|lantern|led\s*strip|ring\s*light|rgb\s*light|bulb|night\s*light|spotlight|headlamp)\b/.test(
+        text
+      )
+    ) {
+      return 'light';
+    }
+
+    // 7. Watches / Timepieces / Smartwatches
+    if (
+      /\b(watch|chronograph|horology|timepiece|rolex|casio|seiko|omega|tissot|fossil|citizen|g-shock|smartwatch|amoled|strap|dial|quartz|automatic)\b/.test(
+        text
+      ) ||
+      (checkCategory &&
+        (watch.category === 'Analog Watches' ||
+          watch.category === 'Digital Watches' ||
+          watch.category === 'Smartwatches'))
+    ) {
+      return 'watch';
+    }
+
+    return null;
+  };
+
+  // Pass 1: Strict primary identity (name + brand + model + category)
+  const primaryMatch = classifyText(primary, true);
+  if (primaryMatch) {
+    return buildProfileForKind(primaryMatch, {
+      specBadge: watch.capacity_spec || undefined,
+    });
   }
 
-  // 2. Liquid / Water Bottle / Flask / Tumbler / Perfume / Spray
-  if (
-    /\b(water|bottle|botol|pani|panir|flask|thermos|tumbler|sipper|mug|cup|hydration|stanley|hydro\s*flask|perfume|attar|cologne|eau\s*de|mist\s*spray|spray|shampoo|serum|drink)\b/.test(
-      haystack
-    )
-  ) {
-    return buildProfileForKind('liquid');
+  // Pass 2: Full metadata fallback (for generic category items)
+  const fullMatch = classifyText(fullHaystack, false);
+  if (fullMatch) {
+    return buildProfileForKind(fullMatch, {
+      specBadge: watch.capacity_spec || undefined,
+    });
   }
 
-  // 3. Audio / Bluetooth Speakers / TWS Earbuds / Neckbands / Headphones
-  if (
-    /\b(speaker|bluetooth\s*speaker|soundbar|woofer|subwoofer|ktx|jbl|earbud|earphone|tws|airpod|headphone|headset|neckband|mic|microphone|audio|bass)\b/.test(
-      haystack
-    ) ||
-    watch.category === 'Bluetooth Speakers' ||
-    watch.category === 'TWS Earbuds' ||
-    watch.category === 'Neckbands'
-  ) {
-    return buildProfileForKind('audio');
-  }
-
-  // 4. Cooling Fan / Mini Fan / Air Cooler / Hair Dryer
-  if (
-    /\b(fan|mini\s*fan|neck\s*fan|desk\s*fan|cooler|air\s*purifier|blower|hair\s*dryer|breeze)\b/.test(
-      haystack
-    )
-  ) {
-    return buildProfileForKind('fan');
-  }
-
-  // 5. Lights / Flashlights / Desk Lamps / Ring Lights / Lanterns
-  if (
-    /\b(light|lamp|torch|flashlight|lantern|led\s*strip|ring\s*light|bulb|night\s*light|spotlight|headlamp)\b/.test(
-      haystack
-    )
-  ) {
-    return buildProfileForKind('light');
-  }
-
-  // 6. Watches / Timepieces / Smartwatches
-  if (
-    /\b(watch|chronograph|horology|timepiece|rolex|casio|seiko|omega|tissot|fossil|citizen|g-shock|smartwatch|amoled|strap|dial|quartz|automatic)\b/.test(
-      haystack
-    ) ||
-    watch.category === 'Analog Watches' ||
-    watch.category === 'Digital Watches' ||
-    watch.category === 'Smartwatches'
-  ) {
-    return buildProfileForKind('watch');
-  }
-
-  // 7. Power Bank / Dedicated Charger / Cable / Adapter ONLY (never generic Type-C / mAh alone!)
-  if (
-    /\b(power\s*bank|powerbank|wall\s*charger|fast\s*charger|gan\s*charger|charging\s*adapter|power\s*adapter|charging\s*cable|data\s*cable|magsafe\s*battery|battery\s*pack|anker\s*powercore|car\s*charger|charger)\b/.test(
-      haystack
-    ) ||
-    watch.category === 'Power Banks' ||
-    watch.category === 'Chargers & Cables'
-  ) {
-    return buildProfileForKind('power');
-  }
-
-  return buildProfileForKind('universal');
+  return buildProfileForKind('universal', {
+    specBadge: watch.capacity_spec || undefined,
+  });
 }
 
 function readCacheMap(): Record<string, ProductMotionProfile> {
@@ -291,18 +334,34 @@ function saveCachedMotionProfile(signature: string, profile: ProductMotionProfil
   }
 }
 
+export function clearMotionProfileCache(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(MOTION_CACHE_KEY);
+    window.localStorage.removeItem('new_chiko_motion_online_cache_v3');
+  } catch {
+    // ignore
+  }
+}
+
 /**
- * Searches online via /api/showcase/identify-product (Google Search Grounding + Vision)
- * to verify the exact real-world product first, then caches the result permanently in localStorage.
+ * Analyzes the product photo + details via /api/showcase/identify-product (Gemini Vision + Server Persistent Cache)
+ * to generate the exact real-world animation profile, then caches locally for instant 0ms opens.
  */
-export async function resolveProductMotionOnline(watch: WatchItem): Promise<ProductMotionProfile> {
+export async function resolveProductMotionOnline(
+  watch: WatchItem,
+  forceRefresh = false
+): Promise<ProductMotionProfile> {
   const signature = buildMotionSignature(watch);
-  const cached = loadCachedMotionProfile(signature);
-  if (cached?.verifiedOnline) {
-    return cached;
+  if (!forceRefresh) {
+    const cached = loadCachedMotionProfile(signature);
+    if (cached?.verifiedOnline && cached.source === 'gemini-vision') {
+      return cached;
+    }
   }
 
-  const existing = inFlightLookups.get(signature);
+  const flightKey = `${signature}:${forceRefresh ? 'force' : 'normal'}`;
+  const existing = inFlightLookups.get(flightKey);
   if (existing) return existing;
 
   const task = (async () => {
@@ -312,6 +371,7 @@ export async function resolveProductMotionOnline(watch: WatchItem): Promise<Prod
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: watch.id,
           imageUrl: watch.image_url,
           productName: watch.product_name,
           brand: watch.brand,
@@ -321,22 +381,31 @@ export async function resolveProductMotionOnline(watch: WatchItem): Promise<Prod
           description: watch.description,
           capacitySpec: watch.capacity_spec,
           connectivity: watch.connectivity,
+          forceRefresh,
         }),
       });
       if (!res.ok) return localFallback;
       const data = (await res.json()) as {
         verified?: boolean;
+        source?: string;
         actionKind?: ProductActionKind;
         verifiedProductType?: string;
         title?: string;
         activeLabel?: string;
         tap2Prompt?: string;
+        accentHex?: string;
+        secondaryHex?: string;
+        specBadge?: string;
       };
       if (data?.verified && data.actionKind) {
         const verifiedProfile = buildProfileForKind(data.actionKind, {
           title: data.title,
           activeLabel: data.activeLabel,
           tap2Prompt: data.tap2Prompt,
+          accentHex: data.accentHex,
+          secondaryHex: data.secondaryHex,
+          specBadge: data.specBadge || watch.capacity_spec,
+          source: data.source,
           verifiedOnline: true,
           verifiedProductType: data.verifiedProductType,
         });
@@ -347,23 +416,26 @@ export async function resolveProductMotionOnline(watch: WatchItem): Promise<Prod
     } catch {
       return localFallback;
     } finally {
-      inFlightLookups.delete(signature);
+      inFlightLookups.delete(flightKey);
     }
   })();
 
-  inFlightLookups.set(signature, task);
+  inFlightLookups.set(flightKey, task);
   return task;
 }
 
 /**
  * Called automatically when ANY new product is added or updated in inventory
- * so online product search + custom animation profile is ready immediately.
+ * so Gemini Vision analyzes the photo + metadata and prepares the tailored animation immediately.
  */
-export async function prewarmProductMotionOnline(watch: WatchItem): Promise<void> {
+export async function prewarmProductMotionOnline(
+  watch: WatchItem,
+  forceRefresh = false
+): Promise<ProductMotionProfile | null> {
   try {
-    await resolveProductMotionOnline(watch);
+    return await resolveProductMotionOnline(watch, forceRefresh);
   } catch {
-    // non-fatal background prewarm
+    return null;
   }
 }
 

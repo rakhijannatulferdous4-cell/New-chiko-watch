@@ -77,6 +77,14 @@ interface GlintStar {
   maxLife: number;
 }
 
+interface ElectricArc {
+  points: Array<{ x: number; y: number }>;
+  life: number;
+  maxLife: number;
+  width: number;
+  hue: 'emerald' | 'cyan';
+}
+
 const MAX_PARTICLES = 1200;
 
 export function CinemaProductCanvas({
@@ -93,6 +101,7 @@ export function CinemaProductCanvas({
   const motesRef = useRef<DustMote[]>([]);
   const ribbonsRef = useRef<WindRibbon[]>([]);
   const glintsRef = useRef<GlintStar[]>([]);
+  const arcsRef = useRef<ElectricArc[]>([]);
   const beamIntensityRef = useRef<number>(0);
   const beamOriginRef = useRef<{ x: number; y: number }>({ x: 0.5, y: 0.42 });
   const lastBurstRef = useRef<number>(0);
@@ -218,26 +227,63 @@ export function CinemaProductCanvas({
         });
       }
     } else if (actionKind === 'power') {
-      // 75 high-speed emerald/ice photon motes streaming toward the fast-charging smartphone card
+      // Unmistakable Super-Fast Charge Burst: jagged electric lightning arcs + rising charge ions + high-speed USB-C power surge (NO soundwave rings!)
+      const portX = Math.max(w * 0.25, Math.min(w * 0.72, ox));
+      const portY = Math.max(h * 0.35, Math.min(h * 0.72, oy));
       const targetX = w * 0.78;
       const targetY = h * 0.84;
-      for (let i = 0; i < 75; i++) {
-        const t = i / 75;
-        motesRef.current.push({
-          x: ox + (targetX - ox) * t * 0.22 + (Math.random() - 0.5) * 26,
-          y: oy + (targetY - oy) * t * 0.22 + (Math.random() - 0.5) * 26,
-          vx: (targetX - ox) * (0.75 + Math.random() * 0.65) + (Math.random() - 0.5) * 55,
-          vy: (targetY - oy) * (0.75 + Math.random() * 0.65) + (Math.random() - 0.5) * 55,
-          r: 1.4 + Math.random() * 2.8,
-          life: -t * 0.45,
-          maxLife: 0.72 + Math.random() * 0.42,
-          tone: i % 2 === 0 ? 'emerald' : 'cool',
+
+      const buildLightningBolt = (
+        x1: number,
+        y1: number,
+        x2: number,
+        y2: number,
+        segments: number,
+        jitter: number
+      ) => {
+        const pts: Array<{ x: number; y: number }> = [{ x: x1, y: y1 }];
+        for (let s = 1; s < segments; s++) {
+          const t = s / segments;
+          const bx = x1 + (x2 - x1) * t + (Math.random() - 0.5) * jitter;
+          const by = y1 + (y2 - y1) * t + (Math.random() - 0.5) * jitter;
+          pts.push({ x: bx, y: by });
+        }
+        pts.push({ x: x2, y: y2 });
+        return pts;
+      };
+
+      // 6 crackling electric lightning arcs radiating from the power bank toward the charging cable & device
+      for (let a = 0; a < 6; a++) {
+        const toTarget = a < 3;
+        const endX = toTarget
+          ? targetX + (Math.random() - 0.5) * 28
+          : portX + (Math.random() - 0.5) * 140;
+        const endY = toTarget
+          ? targetY + (Math.random() - 0.5) * 22
+          : portY + (Math.random() - 0.5) * 120;
+        arcsRef.current.push({
+          points: buildLightningBolt(portX, portY, endX, endY, 8, toTarget ? 28 : 22),
+          life: -(a * 0.05),
+          maxLife: 0.34 + Math.random() * 0.22,
+          width: toTarget ? 2.4 : 1.6,
+          hue: a % 2 === 0 ? 'emerald' : 'cyan',
         });
       }
-      wavesRef.current.push(
-        { x: ox, y: oy, r: 8, maxR: w * 0.36, life: 0, maxLife: 0.65, thickness: 2.2 },
-        { x: ox, y: oy, r: 4, maxR: w * 0.26, life: -0.1, maxLife: 0.55, thickness: 1.4 }
-      );
+
+      // 95 high-speed emerald/cyan charge photon sparks streaming into the fast-charging HUD
+      for (let i = 0; i < 95; i++) {
+        const t = i / 95;
+        motesRef.current.push({
+          x: portX + (targetX - portX) * t * 0.25 + (Math.random() - 0.5) * 28,
+          y: portY + (targetY - portY) * t * 0.25 + (Math.random() - 0.5) * 24,
+          vx: (targetX - portX) * (0.85 + Math.random() * 0.75) + (Math.random() - 0.5) * 48,
+          vy: (targetY - portY) * (0.85 + Math.random() * 0.75) - 24 + (Math.random() - 0.5) * 48,
+          r: 1.5 + Math.random() * 3.0,
+          life: -t * 0.42,
+          maxLife: 0.75 + Math.random() * 0.45,
+          tone: i % 3 === 0 ? 'cool' : 'emerald',
+        });
+      }
     } else if (actionKind === 'watch') {
       // 7 anamorphic diamond sapphire sunburst glints + 70 champagne luxury bokeh motes
       for (let i = 0; i < 7; i++) {
@@ -351,6 +397,7 @@ export function CinemaProductCanvas({
       motesRef.current = [];
       ribbonsRef.current = [];
       glintsRef.current = [];
+      arcsRef.current = [];
       beamIntensityRef.current = 0;
       lastBurstRef.current = 0;
     }
@@ -444,44 +491,124 @@ export function CinemaProductCanvas({
         }
       }
 
-      // 0. Sleek Curved USB-C Optical Charge Conduit (Power Banks / Chargers ONLY on Stage 2)
-      if (actionKind === 'power' && lastBurstRef.current > 0) {
-        const startX = beamOriginRef.current.x * w;
-        const startY = Math.min(h * 0.72, Math.max(h * 0.48, beamOriginRef.current.y * h));
+      // 0. Super-Fast USB-C Optical Charge Conduit + Glowing Port Aura + Electric Lightning Bolts (Power Banks / Chargers)
+      if (actionKind === 'power') {
+        const isTurbo = lastBurstRef.current > 0;
+        const startX = (isTurbo ? beamOriginRef.current.x : 0.46) * w;
+        const startY = Math.min(h * 0.74, Math.max(h * 0.48, (isTurbo ? beamOriginRef.current.y : 0.64) * h));
         const endX = w * 0.78;
         const endY = h * 0.84;
-        const ctrlX = (startX + endX) * 0.5 - 24;
-        const ctrlY = Math.max(startY, endY) + 34;
+        const ctrlX = (startX + endX) * 0.5 - 22;
+        const ctrlY = Math.max(startY, endY) + 32;
 
+        // Ambient emerald/cyan power-port glow
+        const portPulse = 0.78 + Math.sin(now * 0.006) * 0.22;
+        const portGlow = ctx.createRadialGradient(startX, startY, 2, startX, startY, isTurbo ? 46 : 30);
+        portGlow.addColorStop(0, `rgba(16, 185, 129, ${(isTurbo ? 0.55 : 0.32) * portPulse})`);
+        portGlow.addColorStop(0.5, `rgba(56, 189, 248, ${(isTurbo ? 0.24 : 0.14) * portPulse})`);
+        portGlow.addColorStop(1, 'rgba(16, 185, 129, 0)');
+        ctx.fillStyle = portGlow;
+        ctx.beginPath();
+        ctx.arc(startX, startY, isTurbo ? 46 : 30, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Outer insulated cable glow + bright energy core
         const lineGrad = ctx.createLinearGradient(startX, startY, endX, endY);
-        lineGrad.addColorStop(0, 'rgba(56, 189, 248, 0.16)');
-        lineGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.56)');
-        lineGrad.addColorStop(1, 'rgba(16, 185, 129, 0.82)');
+        lineGrad.addColorStop(0, 'rgba(56, 189, 248, 0.35)');
+        lineGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.78)');
+        lineGrad.addColorStop(1, 'rgba(16, 185, 129, 0.95)');
 
         ctx.save();
-        ctx.strokeStyle = lineGrad;
-        ctx.lineWidth = 2.6;
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.22)';
+        ctx.lineWidth = isTurbo ? 8 : 5.5;
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.quadraticCurveTo(ctrlX, ctrlY, endX, endY);
         ctx.stroke();
 
-        // Twin photon pulses traveling down the braided charge path
-        for (let k = 0; k < 2; k++) {
-          const pulseT = (now * 0.0014 + k * 0.5) % 1;
+        ctx.strokeStyle = lineGrad;
+        ctx.lineWidth = isTurbo ? 3.2 : 2.2;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.quadraticCurveTo(ctrlX, ctrlY, endX, endY);
+        ctx.stroke();
+
+        // Streaming current pulses traveling continuously down the charging cable
+        const pulseCount = isTurbo ? 4 : 2;
+        const pulseSpeed = isTurbo ? 0.0021 : 0.0011;
+        for (let k = 0; k < pulseCount; k++) {
+          const pulseT = (now * pulseSpeed + k / pulseCount) % 1;
           const inv = 1 - pulseT;
           const px = inv * inv * startX + 2 * inv * pulseT * ctrlX + pulseT * pulseT * endX;
           const py = inv * inv * startY + 2 * inv * pulseT * ctrlY + pulseT * pulseT * endY;
 
-          const pg = ctx.createRadialGradient(px, py, 1, px, py, 13);
+          const pg = ctx.createRadialGradient(px, py, 1, px, py, isTurbo ? 15 : 10);
           pg.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
-          pg.addColorStop(0.42, 'rgba(52, 211, 153, 0.8)');
+          pg.addColorStop(0.45, 'rgba(16, 185, 129, 0.88)');
           pg.addColorStop(1, 'rgba(56, 189, 248, 0)');
           ctx.fillStyle = pg;
           ctx.beginPath();
-          ctx.arc(px, py, 13, 0, Math.PI * 2);
+          ctx.arc(px, py, isTurbo ? 15 : 10, 0, Math.PI * 2);
           ctx.fill();
+        }
+
+        // Occasional live micro-arc crackle during Turbo Fast Charge
+        if (isTurbo && Math.random() < dt * 4.5 && arcsRef.current.length < 8) {
+          const pts: Array<{ x: number; y: number }> = [{ x: startX, y: startY }];
+          const segs = 6;
+          for (let s = 1; s < segs; s++) {
+            const t = s / segs;
+            const inv = 1 - t;
+            const cx = inv * inv * startX + 2 * inv * t * ctrlX + t * t * endX;
+            const cy = inv * inv * startY + 2 * inv * t * ctrlY + t * t * endY;
+            pts.push({
+              x: cx + (Math.random() - 0.5) * 20,
+              y: cy + (Math.random() - 0.5) * 20,
+            });
+          }
+          pts.push({ x: endX, y: endY });
+          arcsRef.current.push({
+            points: pts,
+            life: 0,
+            maxLife: 0.22,
+            width: 1.8,
+            hue: Math.random() > 0.4 ? 'emerald' : 'cyan',
+          });
+        }
+
+        // Render active electric lightning arcs
+        for (let i = arcsRef.current.length - 1; i >= 0; i--) {
+          const arc = arcsRef.current[i];
+          arc.life += dt;
+          if (arc.life < 0) continue;
+          if (arc.life >= arc.maxLife) {
+            arcsRef.current.splice(i, 1);
+            continue;
+          }
+          const t = arc.life / arc.maxLife;
+          const fade = (1 - t) * (0.75 + Math.random() * 0.25);
+
+          ctx.strokeStyle =
+            arc.hue === 'emerald'
+              ? `rgba(16, 185, 129, ${fade * 0.65})`
+              : `rgba(56, 189, 248, ${fade * 0.65})`;
+          ctx.lineWidth = arc.width * 3;
+          ctx.beginPath();
+          arc.points.forEach((pt, idx) => {
+            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
+          });
+          ctx.stroke();
+
+          ctx.strokeStyle = `rgba(255, 255, 255, ${fade * 0.96})`;
+          ctx.lineWidth = arc.width * 0.85;
+          ctx.beginPath();
+          arc.points.forEach((pt, idx) => {
+            if (idx === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
+          });
+          ctx.stroke();
         }
         ctx.restore();
       }

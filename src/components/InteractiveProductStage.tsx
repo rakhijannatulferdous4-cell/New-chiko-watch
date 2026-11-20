@@ -4,12 +4,14 @@ import {
   Film,
   Image as ImageIcon,
   Loader2,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Trash2,
   Upload,
   Volume2,
   VolumeX,
+  Zap,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { WatchItem } from '../types/watch';
@@ -161,14 +163,14 @@ export function InteractiveProductStage({
     if (actionVideoRef.current) actionVideoRef.current.muted = muted;
   }, [muted]);
 
-  // Search online via Google Search Grounding + Vision FIRST whenever a product opens (cached permanently in localStorage)
+  // Analyze product photo + specs with Gemini Vision FIRST whenever a product opens (cached on server + localStorage)
   useEffect(() => {
     let active = true;
     const signature = buildMotionSignature(watch);
     const cached = loadCachedMotionProfile(signature);
     if (cached) {
       setProfile(cached);
-      if (cached.verifiedOnline) {
+      if (cached.verifiedOnline && cached.source === 'gemini-vision') {
         setVerifyingOnline(false);
         return () => {
           active = false;
@@ -195,6 +197,21 @@ export function InteractiveProductStage({
       active = false;
     };
   }, [watch]);
+
+  const handleForceReanalyzeAi = async () => {
+    if (verifyingOnline) return;
+    setVerifyingOnline(true);
+    setStudioMessage('');
+    try {
+      const fresh = await resolveProductMotionOnline(watch, true);
+      setProfile(fresh);
+      setStudioMessage(
+        `AI analyzed: ${fresh.verifiedProductType || fresh.title} (${fresh.actionKind} animation active).`
+      );
+    } finally {
+      setVerifyingOnline(false);
+    }
+  };
 
   // Reset stage & load any locally attached custom videos when switching products
   useEffect(() => {
@@ -238,13 +255,20 @@ export function InteractiveProductStage({
     };
   }, [watch.id]);
 
-  // Smooth fast-charge percentage counter animation for Power Bank / Charger products in Stage 2
+  // Smooth fast-charge percentage counter animation for Power Bank / Charger products
   useEffect(() => {
-    if (profile.actionKind !== 'power' || stage !== 'action') return;
-    setChargeLevel(64);
+    if (profile.actionKind !== 'power' || stage === 'photo') return;
+    if (stage === 'reveal') {
+      setChargeLevel(28);
+      const interval = window.setInterval(() => {
+        setChargeLevel((prev) => (prev >= 58 ? 58 : prev + 1));
+      }, 95);
+      return () => window.clearInterval(interval);
+    }
+    setChargeLevel(58);
     const interval = window.setInterval(() => {
       setChargeLevel((prev) => (prev >= 100 ? 100 : prev + 1));
-    }, 65);
+    }, 52);
     return () => window.clearInterval(interval);
   }, [profile.actionKind, stage, burstCount]);
 
@@ -655,30 +679,39 @@ export function InteractiveProductStage({
             pointer={canvasPointer}
           />
 
-          {/* Realistic Sleek Smartphone Fast-Charging Card (ONLY for verified Power Banks & Chargers) */}
+          {/* Realistic Sleek Smartphone Fast-Charging HUD (ONLY for verified Power Banks & Chargers) */}
           <AnimatePresence>
-            {profile.actionKind === 'power' && stage === 'action' && !showCustomVideoLayer && (
+            {profile.actionKind === 'power' && isLive && !showCustomVideoLayer && (
               <motion.div
                 initial={{ opacity: 0, y: 26, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 18, scale: 0.92 }}
                 transition={{ type: 'spring', stiffness: 320, damping: 26 }}
-                className="pointer-events-none absolute bottom-3.5 right-3.5 z-30 rounded-2xl bg-zinc-950/88 text-white px-3.5 py-2.5 shadow-[0_16px_32px_-8px_rgba(9,9,11,0.45)] border border-white/15 backdrop-blur-md min-w-[148px]"
+                className="pointer-events-none absolute bottom-3.5 right-3.5 z-30 rounded-2xl bg-zinc-950/90 text-white px-3.5 py-2.5 shadow-[0_16px_32px_-8px_rgba(9,9,11,0.5)] border border-emerald-400/30 backdrop-blur-md min-w-[164px]"
               >
                 <div className="flex items-center justify-between gap-2.5">
                   <div className="flex items-center gap-1.5 text-emerald-400">
-                    <BatteryCharging size={15} className="shrink-0" />
-                    <span className="text-[10.5px] font-semibold tracking-wide uppercase">
-                      Fast Charge
+                    {stage === 'action' ? (
+                      <Zap size={14} className="shrink-0 fill-emerald-400 animate-pulse" />
+                    ) : (
+                      <BatteryCharging size={15} className="shrink-0" />
+                    )}
+                    <span className="text-[10px] font-bold tracking-wide uppercase">
+                      {stage === 'action' ? 'Turbo Charge' : 'Charging'}
                     </span>
                   </div>
                   <span className="font-mono-num text-xs font-bold text-white">
                     {chargeLevel}%
                   </span>
                 </div>
-                <div className="mt-2 h-1.5 w-full rounded-full bg-white/15 overflow-hidden">
+                {(profile.specBadge || watch.capacity_spec) && (
+                  <p className="text-[9.5px] text-emerald-200/85 font-medium mt-0.5 truncate">
+                    {profile.specBadge || watch.capacity_spec}
+                  </p>
+                )}
+                <div className="mt-1.5 h-1.5 w-full rounded-full bg-white/15 overflow-hidden">
                   <motion.div
-                    className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-sky-400"
+                    className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-teal-300 to-sky-400"
                     animate={{ width: `${chargeLevel}%` }}
                     transition={{ duration: 0.12 }}
                   />
@@ -742,6 +775,27 @@ export function InteractiveProductStage({
             className="overflow-hidden"
           >
             <div className="rounded-xl bg-stone-50 border border-stone-200 p-3 space-y-2.5 text-xs">
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-white border border-stone-200 px-2.5 py-2">
+                <div className="min-w-0">
+                  <p className="font-semibold text-zinc-900 flex items-center gap-1.5">
+                    <Sparkles size={12} className="text-emerald-600 shrink-0" />
+                    <span>AI Auto Animation</span>
+                  </p>
+                  <p className="text-[10.5px] text-zinc-500 truncate">
+                    {profile.verifiedProductType || profile.title} · {profile.actionKind}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={verifyingOnline}
+                  onClick={() => void handleForceReanalyzeAi()}
+                  className="min-h-[30px] px-2.5 rounded-md bg-zinc-900 hover:bg-zinc-800 text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  <RefreshCw size={11} className={verifyingOnline ? 'animate-spin' : ''} />
+                  <span>{verifyingOnline ? 'Analyzing...' : 'Re-Analyze AI'}</span>
+                </button>
+              </div>
+
               <div className="flex items-center justify-between gap-2">
                 <p className="font-semibold text-zinc-900">Optional Custom MP4 Clips</p>
                 <span className="text-[10.5px] text-zinc-500">Saved locally on device</span>

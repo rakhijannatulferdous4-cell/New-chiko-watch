@@ -81,6 +81,7 @@ interface AdminDashboardProps {
   onAddToMemo?: (watch: WatchItem, agreedPrice?: number) => void;
   onRefreshOrders: () => Promise<void>;
   onOrderUpdated: (updated: CustomerOrder) => void;
+  onOrderDeleted: (orderId: string) => void;
   onRefreshMessages: () => Promise<void>;
   onRefreshPinResets: () => Promise<void>;
   onMessageSent: (msg: CustomerMessage) => void;
@@ -246,6 +247,7 @@ export function AdminDashboard({
   onAddToMemo,
   onRefreshOrders,
   onOrderUpdated,
+  onOrderDeleted,
   onRefreshMessages,
   onRefreshPinResets,
   onMessageSent,
@@ -1543,6 +1545,7 @@ export function AdminDashboard({
               adminToken={adminToken}
               onRefreshOrders={onRefreshOrders}
               onOrderUpdated={onOrderUpdated}
+              onOrderDeleted={onOrderDeleted}
               onMessageSent={onMessageSent}
               onThreadMarkedRead={onThreadMarkedRead}
               onConvertOrderToMemo={onConvertOrderToMemo}

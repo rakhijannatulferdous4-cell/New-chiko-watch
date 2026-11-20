@@ -264,3 +264,18 @@ export async function updateOrderStatus(
   }
   return json.order as CustomerOrder;
 }
+
+export async function deleteAdminOrder(orderId: string, adminToken?: string): Promise<void> {
+  const token = adminToken || getStoredAdminToken();
+  const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+    method: 'DELETE',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json?.ok) {
+    throw new Error(json?.error || `Failed to delete order (HTTP ${res.status}).`);
+  }
+}
+

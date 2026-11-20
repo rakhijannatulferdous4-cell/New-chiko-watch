@@ -146,6 +146,21 @@ interface StoredPinResetRequest {
   expires_at: string;
 }
 
+interface StoredMotionProfile {
+  signature: string;
+  productId?: string;
+  actionKind: 'vapor' | 'liquid' | 'power' | 'audio' | 'fan' | 'light' | 'watch' | 'universal';
+  verifiedProductType: string;
+  title: string;
+  activeLabel: string;
+  tap2Prompt: string;
+  accentHex?: string;
+  secondaryHex?: string;
+  specBadge?: string;
+  source: 'gemini-vision' | 'live-web-search' | 'metadata-rules';
+  updatedAt: string;
+}
+
 interface ServerStoreData {
   watches: StoredWatch[];
   memos: StoredMemo[];
@@ -154,6 +169,7 @@ interface ServerStoreData {
   customerAccounts?: StoredCustomerAccount[];
   customerMessages?: StoredCustomerMessage[];
   pinResetRequests?: StoredPinResetRequest[];
+  motionProfiles?: Record<string, StoredMotionProfile>;
 }
 
 function normalizePhoneKey(raw: string): string {
@@ -431,6 +447,10 @@ function readServerStore(): ServerStoreData {
         customerAccounts: Array.isArray(parsed?.customerAccounts) ? parsed.customerAccounts : [],
         customerMessages: Array.isArray(parsed?.customerMessages) ? parsed.customerMessages : [],
         pinResetRequests: Array.isArray(parsed?.pinResetRequests) ? parsed.pinResetRequests : [],
+        motionProfiles:
+          parsed?.motionProfiles && typeof parsed.motionProfiles === 'object'
+            ? (parsed.motionProfiles as Record<string, StoredMotionProfile>)
+            : {},
       };
       return storeCache;
     }
@@ -445,6 +465,7 @@ function readServerStore(): ServerStoreData {
     customerAccounts: [],
     customerMessages: [],
     pinResetRequests: [],
+    motionProfiles: {},
   };
   return storeCache;
 }
@@ -1146,12 +1167,14 @@ async function startServer() {
         });
       }
       const saved = sanitizeStoredWatch(data as Record<string, unknown>);
+      scheduleAutoProductMotionAnalysis(saved);
       return res.status(201).json({ ok: true, source: 'supabase', watch: saved });
     }
 
     const store = readServerStore();
     const nextWatches = [watch, ...store.watches.filter((w) => w.id !== watch.id)];
     writeServerStore({ ...store, watches: nextWatches });
+    scheduleAutoProductMotionAnalysis(watch);
     return res.status(201).json({ ok: true, source: 'server', watch, watches: nextWatches });
   });
 
@@ -1303,6 +1326,7 @@ async function startServer() {
         });
       }
       const saved = data ? sanitizeStoredWatch(data as Record<string, unknown>) : null;
+      if (saved) scheduleAutoProductMotionAnalysis(saved);
       return res.json({ ok: true, source: 'supabase', watch: saved });
     }
 
@@ -1312,11 +1336,13 @@ async function startServer() {
       const created = sanitizeStoredWatch({ ...patch, id });
       const nextWatches = [created, ...store.watches];
       writeServerStore({ ...store, watches: nextWatches });
+      scheduleAutoProductMotionAnalysis(created);
       return res.json({ ok: true, source: 'server', watch: created, watches: nextWatches });
     }
     const updated = sanitizeStoredWatch({ ...existing, ...patch, id }, existing);
     const nextWatches = store.watches.map((w) => (w.id === id ? updated : w));
     writeServerStore({ ...store, watches: nextWatches });
+    scheduleAutoProductMotionAnalysis(updated);
     return res.json({ ok: true, source: 'server', watch: updated, watches: nextWatches });
   });
 
@@ -2065,6 +2091,59 @@ async function startServer() {
 
   app.patch('/api/orders/:id/status', handleOrderStatusUpdate);
   app.post('/api/orders/:id/status', handleOrderStatusUpdate);
+
+  async function handleOrderDelete(req: Request, res: Response) {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Staff login required.' });
+    }
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ ok: false, error: 'Order ID is required.' });
+    }
+
+    let source: 'supabase' | 'server' = 'server';
+    let deletedInSupabase = false;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    const supabase = getServerSupabase();
+
+    if (supabase && isUuid) {
+      try {
+        const { error } = await supabase.from('customer_orders').delete().eq('id', id);
+        if (error) {
+          return res.status(502).json({
+            ok: false,
+            error: `Supabase order delete failed: ${error.message}`,
+          });
+        }
+        deletedInSupabase = true;
+        source = 'supabase';
+      } catch (err) {
+        return res.status(502).json({
+          ok: false,
+          error: err instanceof Error ? err.message : 'Supabase order delete failed.',
+        });
+      }
+    }
+
+    // Always keep local fallback store in sync too
+    const store = readServerStore();
+    const beforeCount = (store.orders || []).length;
+    const remaining = (store.orders || []).filter((o) => o.id !== id);
+    const deletedLocally = remaining.length < beforeCount;
+    if (deletedLocally) {
+      writeServerStore({ ...store, orders: remaining });
+    }
+
+    if (!deletedInSupabase && !deletedLocally) {
+      return res.status(404).json({ ok: false, error: 'Order not found.' });
+    }
+
+    return res.json({ ok: true, id, source });
+  }
+
+  app.delete('/api/orders/:id', handleOrderDelete);
+  app.post('/api/orders/:id/delete', handleOrderDelete);
 
   // =========================================================================
   // Customer Accounts (ID System), Order History & Two-Way Messaging
@@ -3576,36 +3655,74 @@ Classify accurately based on what this product actually is in real life:
     }
   };
 
-  const classifyActionKindFromOnlineText = (
-    combinedText: string,
+  const buildServerMotionSignature = (input: {
+    id?: string;
+    productName?: string;
+    brand?: string;
+    model?: string;
+    category?: string;
+    color?: string;
+    capacitySpec?: string;
+    description?: string;
+    imageUrl?: string;
+  }): string => {
+    return [
+      input.id || '',
+      input.productName || '',
+      input.brand || '',
+      input.model || '',
+      input.category || '',
+      input.color || '',
+      input.capacitySpec || '',
+      String(input.description || '').slice(0, 120),
+      String(input.imageUrl || '').slice(0, 120),
+    ]
+      .join('|')
+      .toLowerCase();
+  };
+
+  const classifyActionKindFromText = (
+    primaryIdentityText: string,
+    extraText: string,
     categoryText: string
   ): {
     actionKind: 'vapor' | 'liquid' | 'power' | 'audio' | 'fan' | 'light' | 'watch' | 'universal';
     verifiedProductType: string;
   } => {
-    const text = combinedText.toLowerCase();
+    const primary = primaryIdentityText.toLowerCase();
     const cat = categoryText.toLowerCase();
+    const full = `${primary} ${extraText.toLowerCase()}`;
 
-    // Strictly check Vape / Pod / Humidifier FIRST (never hijacked by 1000mAh or Type-C!)
+    // PASS 1: Strict Primary Identity (productName + brand + model + category) — NEVER hijacked by compatibility text or noisy web sidebars!
     if (
       /\b(vape|vaping|pod\s*kit|pod\s*system|disposable\s*vape|pre[\s-]*filled\s*pod|prelled\s*pod|puffs?|e-cig|e-cigarette|e-liquid|nicotine|nic\s*salt|salt\s*nic|mesh\s*coil|oxva|xlim|voopoo|uwell|caliburn|vaporesso|xros|elf\s*bar|elfbar|vozol|d-breath|waka|iget|geek\s*bar|lost\s*mary|relx|shisha|hookah|humidifier|aroma\s*diffuser)\b/.test(
-        text
+        primary
       )
     ) {
       return { actionKind: 'vapor', verifiedProductType: 'Vape / Pod Vapor Device' };
     }
 
     if (
-      /\b(water\s*bottle|insulated\s*bottle|thermos|vacuum\s*flask|tumbler|stanley\s*quencher|hydro\s*flask|sipper|perfume|eau\s*de\s*parfum|cologne|attar|body\s*mist|spray\s*bottle)\b/.test(
-        text
+      /\b(power\s*bank|powerbank|wall\s*charger|fast\s*charger|gan\s*charger|charging\s*adapter|power\s*adapter|travel\s*adapter|charging\s*cable|data\s*cable|magsafe\s*battery|portable\s*charger|battery\s*pack|car\s*charger|charger)\b/.test(
+        primary
+      ) ||
+      cat.includes('power bank') ||
+      cat.includes('charger')
+    ) {
+      return { actionKind: 'power', verifiedProductType: 'Fast Charging Power Bank / Charger' };
+    }
+
+    if (
+      /\b(water\s*bottle|insulated\s*bottle|thermos|vacuum\s*flask|tumbler|stanley|hydro\s*flask|sipper|perfume|eau\s*de|cologne|attar|body\s*mist|spray\s*bottle)\b/.test(
+        primary
       )
     ) {
       return { actionKind: 'liquid', verifiedProductType: 'Bottle / Liquid Vessel' };
     }
 
     if (
-      /\b(bluetooth\s*speaker|wireless\s*speaker|portable\s*speaker|soundbar|subwoofer|ktx-\d+|jbl\s*(flip|charge|go|clip)|tws|earbuds?|earphones?|airpods?|headphones?|neckband|microphone)\b/.test(
-        text
+      /\b(bluetooth\s*speaker|wireless\s*speaker|portable\s*speaker|speaker|soundbar|sound\s*box|soundbox|woofer|subwoofer|ktx-\d+|jbl|tws|earbuds?|earphones?|airpods?|headphones?|headset|neckband|microphone)\b/.test(
+        primary
       ) ||
       cat.includes('speaker') ||
       cat.includes('earbud') ||
@@ -3615,47 +3732,333 @@ Classify accurately based on what this product actually is in real life:
     }
 
     if (
-      /\b(mini\s*fan|portable\s*fan|neck\s*fan|desk\s*fan|cooling\s*fan|handheld\s*fan|air\s*cooler|hair\s*dryer)\b/.test(
-        text
+      /\b(mini\s*fan|portable\s*fan|neck\s*fan|desk\s*fan|cooling\s*fan|handheld\s*fan|fan|air\s*cooler|hair\s*dryer)\b/.test(
+        primary
       )
     ) {
       return { actionKind: 'fan', verifiedProductType: 'Cooling / Airflow Fan' };
     }
 
     if (
-      /\b(flashlight|torch\s*light|desk\s*lamp|table\s*lamp|ring\s*light|led\s*lamp|lantern|night\s*light|headlamp|spotlight)\b/.test(
-        text
+      /\b(flashlight|torch\s*light|torch|desk\s*lamp|table\s*lamp|ring\s*light|led\s*lamp|rgb\s*light|lantern|night\s*light|headlamp|spotlight|bulb)\b/.test(
+        primary
       )
     ) {
       return { actionKind: 'light', verifiedProductType: 'Lighting Device' };
     }
 
     if (
-      /\b(wristwatch|analog\s*watch|digital\s*watch|smartwatch|smart\s*watch|chronograph|quartz\s*watch|automatic\s*watch|rolex|casio|g-shock|seiko|tissot|fossil|omega|citizen)\b/.test(
-        text
+      /\b(wristwatch|analog\s*watch|digital\s*watch|smartwatch|smart\s*watch|watch|chronograph|quartz|automatic|rolex|casio|g-shock|seiko|tissot|fossil|omega|citizen)\b/.test(
+        primary
       ) ||
       cat.includes('watch')
     ) {
       return { actionKind: 'watch', verifiedProductType: 'Signature Timepiece' };
     }
 
+    // PASS 2: Fallback using full description + web snippets when title/category is generic (e.g. "Gadgets & Accessories")
     if (
-      /\b(power\s*bank|powerbank|wall\s*charger|fast\s*charger|gan\s*charger|charging\s*adapter|power\s*adapter|charging\s*cable|magsafe\s*battery|portable\s*charger)\b/.test(
-        text
-      ) ||
-      cat.includes('power bank') ||
-      cat.includes('charger')
+      /\b(vape|vaping|pod\s*kit|pod\s*system|disposable\s*vape|pre[\s-]*filled\s*pod|prelled\s*pod|puffs?|e-cig|e-liquid|nicotine|nic\s*salt|mesh\s*coil|oxva|xlim|voopoo|uwell|caliburn|vaporesso|xros|elf\s*bar|vozol|d-breath|humidifier|aroma\s*diffuser)\b/.test(
+        full
+      )
+    ) {
+      return { actionKind: 'vapor', verifiedProductType: 'Vape / Pod Vapor Device' };
+    }
+    if (
+      /\b(power\s*bank|powerbank|wall\s*charger|fast\s*charger|gan\s*charger|charging\s*adapter|power\s*adapter|portable\s*charger|magsafe\s*battery)\b/.test(
+        full
+      )
     ) {
       return { actionKind: 'power', verifiedProductType: 'Fast Charging Power Bank / Charger' };
+    }
+    if (
+      /\b(water\s*bottle|insulated\s*bottle|thermos|vacuum\s*flask|tumbler|perfume|eau\s*de|cologne|attar)\b/.test(
+        full
+      )
+    ) {
+      return { actionKind: 'liquid', verifiedProductType: 'Bottle / Liquid Vessel' };
+    }
+    if (
+      /\b(bluetooth\s*speaker|wireless\s*speaker|portable\s*speaker|soundbar|subwoofer|tws|earbuds?|earphones?|airpods?|headphones?|neckband|microphone)\b/.test(
+        full
+      )
+    ) {
+      return { actionKind: 'audio', verifiedProductType: 'Wireless Audio Device' };
+    }
+    if (
+      /\b(mini\s*fan|portable\s*fan|neck\s*fan|desk\s*fan|cooling\s*fan|handheld\s*fan|air\s*cooler|hair\s*dryer)\b/.test(
+        full
+      )
+    ) {
+      return { actionKind: 'fan', verifiedProductType: 'Cooling / Airflow Fan' };
+    }
+    if (
+      /\b(flashlight|torch\s*light|desk\s*lamp|table\s*lamp|ring\s*light|led\s*lamp|lantern|night\s*light|headlamp|spotlight)\b/.test(
+        full
+      )
+    ) {
+      return { actionKind: 'light', verifiedProductType: 'Lighting Device' };
+    }
+    if (
+      /\b(wristwatch|analog\s*watch|digital\s*watch|smartwatch|smart\s*watch|chronograph|quartz\s*watch|automatic\s*watch)\b/.test(
+        full
+      )
+    ) {
+      return { actionKind: 'watch', verifiedProductType: 'Signature Timepiece' };
     }
 
     return { actionKind: 'universal', verifiedProductType: 'Smart Lifestyle Product' };
   };
 
-  // Online Web Search + Vision Product Identifier: searches the internet for exact model/product first so vapes never get misclassified as chargers/power banks
+  async function analyzeAndStoreProductMotion(
+    input: {
+      id?: string;
+      imageUrl?: string;
+      productName?: string;
+      brand?: string;
+      model?: string;
+      category?: string;
+      color?: string;
+      description?: string;
+      capacitySpec?: string;
+      connectivity?: string;
+    },
+    forceRefresh = false
+  ): Promise<StoredMotionProfile> {
+    const signature = buildServerMotionSignature(input);
+    if (!forceRefresh) {
+      const store = readServerStore();
+      const cached = store.motionProfiles?.[signature];
+      if (cached && cached.source === 'gemini-vision') {
+        return cached;
+      }
+    }
+
+    const querySubject = [input.brand, input.model, input.productName]
+      .filter((s) => typeof s === 'string' && s.trim() && s.trim().toLowerCase() !== 'generic')
+      .join(' ')
+      .trim();
+    const primaryIdentity = [input.productName, input.brand, input.model, input.category]
+      .filter((s) => typeof s === 'string' && s.trim())
+      .join(' · ');
+    const fullLabel = [
+      input.brand,
+      input.model,
+      input.productName,
+      input.category,
+      input.color,
+      input.capacitySpec,
+      input.connectivity,
+    ]
+      .filter((s) => typeof s === 'string' && s.trim())
+      .join(' · ');
+
+    // 1. Fetch actual product photo (for Gemini Vision) + live online context in parallel
+    const [imageResult, onlineSnippets] = await Promise.all([
+      (async (): Promise<{ data: string; mimeType: string } | null> => {
+        const rawUrl = typeof input.imageUrl === 'string' ? input.imageUrl.trim() : '';
+        if (!rawUrl) return null;
+        const parsedData = parseDataUrl(rawUrl);
+        if (parsedData) return parsedData;
+        if (isSafeExternalUrl(rawUrl)) {
+          const fetched = await fetchVerifiedImageBytes(rawUrl, 4500);
+          if (fetched) {
+            return {
+              data: fetched.buffer.toString('base64'),
+              mimeType: fetched.contentType,
+            };
+          }
+        }
+        return null;
+      })(),
+      fetchLiveWebSearchSnippets(querySubject || String(input.productName || input.model || '')),
+    ]);
+
+    const persistProfile = (profile: StoredMotionProfile): StoredMotionProfile => {
+      try {
+        const store = readServerStore();
+        const nextMap = { ...(store.motionProfiles || {}) };
+        const keys = Object.keys(nextMap);
+        if (keys.length > 300) {
+          delete nextMap[keys[0]];
+        }
+        nextMap[signature] = profile;
+        writeServerStore({ ...store, motionProfiles: nextMap });
+      } catch {
+        // non-fatal cache write error
+      }
+      return profile;
+    };
+
+    // 2. Primary Analyzer: Real Gemini Vision + Structured JSON Schema (sees the actual photo + specs!)
+    try {
+      const parts: Part[] = [];
+      if (imageResult) {
+        parts.push({
+          inlineData: {
+            mimeType: imageResult.mimeType,
+            data: imageResult.data,
+          },
+        });
+      }
+
+      parts.push({
+        text: `You are an expert electronics & gadget visual inspector for "New Chiko Watch & Electronics".
+Carefully look at the product photo${imageResult ? ' above' : ''} and read the product details to determine what this EXACT product is and design its custom interactive showcase animation profile.
+
+Product Primary Name/Brand/Model/Category: ${primaryIdentity || fullLabel}
+Full Specs: ${fullLabel}
+Description: ${String(input.description || '').slice(0, 360)}
+Online Context (may contain unrelated store sidebar links — ignore unrelated sidebar words!): ${onlineSnippets.slice(0, 1000) || '(none)'}
+
+STRICT CLASSIFICATION RULES:
+1. "power": Power banks, portable chargers, MagSafe battery packs, wall/GaN chargers, charging adapters, USB/Type-C charging cables, car chargers. (Even if description mentions "compatible with earbuds/speakers/watch" or "LED indicator light", a Power Bank MUST ALWAYS be "power"!)
+2. "vapor": Vapes, pod kits, pre-filled pods, disposable puff bars, e-cigarettes, humidifiers, aroma diffusers. (Even if it mentions "1000mAh" or "Type-C charging", a Vape/Pod MUST ALWAYS be "vapor"!)
+3. "audio": Bluetooth speakers, soundboxes, portable speakers, TWS earbuds, headphones, neckbands, microphones.
+4. "watch": Analog watches, digital watches, smartwatches, chronographs, wristwatches.
+5. "light": Flashlights, torches, RGB lamps, desk lamps, ring lights, lanterns, LED bulbs.
+6. "fan": Mini fans, neck fans, desk/portable fans, cooling fans, hair dryers.
+7. "liquid": Water bottles, flasks, thermos, tumblers, perfumes, attar, sprays.
+8. "universal": Calculators, phone stands, keyboards, trimmers, cameras, or any other gadget not in the 7 categories above.
+
+Return clean JSON matching the schema with:
+- actionKind: exact category from the 8 choices above
+- verifiedProductType: concise 2-5 word real-world product type (e.g. "10000mAh Fast-Charge Power Bank", "6000 Puff Pod System", "Portable Bluetooth Speaker")
+- title: 2-3 word animation title (e.g. "Super-Fast Charge", "Silky Vapor Plume", "Acoustic Bass")
+- activeLabel: 2-4 word active animation label (e.g. "Turbo Fast Charging", "Smooth Vapor Active", "Live Bass Soundwaves")
+- tap2Prompt: short interactive tap hint (e.g. "Tap power bank to surge charge", "Tap pod to release silky vapor")
+- accentHex: vibrant #RRGGBB hex matching the product's authentic accent/LED color
+- secondaryHex: complementary #RRGGBB hex
+- specBadge: short 1-3 word spec highlight from the product (e.g. "10000mAh · Fast", "6000 Puffs", "4-Inch Bass", "AMOLED Display")`,
+      });
+
+      const ai = createGeminiClient(14000);
+      const response = await generateWithFallbackModel(
+        ai,
+        {
+          contents: { parts },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                actionKind: { type: Type.STRING },
+                verifiedProductType: { type: Type.STRING },
+                title: { type: Type.STRING },
+                activeLabel: { type: Type.STRING },
+                tap2Prompt: { type: Type.STRING },
+                accentHex: { type: Type.STRING },
+                secondaryHex: { type: Type.STRING },
+                specBadge: { type: Type.STRING },
+              },
+              required: [
+                'actionKind',
+                'verifiedProductType',
+                'title',
+                'activeLabel',
+                'tap2Prompt',
+                'accentHex',
+                'secondaryHex',
+                'specBadge',
+              ],
+            },
+          },
+        },
+        11500
+      );
+
+      const parsed = JSON.parse((response.text ?? '{}').trim()) as Record<string, unknown>;
+      const validKinds = new Set([
+        'vapor',
+        'liquid',
+        'power',
+        'audio',
+        'fan',
+        'light',
+        'watch',
+        'universal',
+      ]);
+      const rawKind =
+        typeof parsed.actionKind === 'string' ? parsed.actionKind.trim().toLowerCase() : '';
+      if (validKinds.has(rawKind)) {
+        const cleanHex = (val: unknown) =>
+          typeof val === 'string' && /^#[0-9a-fA-F]{6}$/.test(val.trim()) ? val.trim() : '';
+
+        return persistProfile({
+          signature,
+          productId: input.id,
+          actionKind: rawKind as StoredMotionProfile['actionKind'],
+          verifiedProductType:
+            typeof parsed.verifiedProductType === 'string'
+              ? parsed.verifiedProductType.trim().slice(0, 80)
+              : '',
+          title: typeof parsed.title === 'string' ? parsed.title.trim().slice(0, 40) : '',
+          activeLabel:
+            typeof parsed.activeLabel === 'string' ? parsed.activeLabel.trim().slice(0, 48) : '',
+          tap2Prompt:
+            typeof parsed.tap2Prompt === 'string' ? parsed.tap2Prompt.trim().slice(0, 56) : '',
+          accentHex: cleanHex(parsed.accentHex),
+          secondaryHex: cleanHex(parsed.secondaryHex),
+          specBadge:
+            typeof parsed.specBadge === 'string' ? parsed.specBadge.trim().slice(0, 32) : '',
+          source: 'gemini-vision',
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    } catch (aiErr) {
+      console.warn(
+        'Gemini Vision product animation analysis fallback:',
+        extractHttpStatus(aiErr),
+        aiErr instanceof Error ? aiErr.message.slice(0, 140) : ''
+      );
+    }
+
+    // 3. Smart Primary-Identity-First Fallback (never lets web sidebars hijack Power Banks into Audio!)
+    const fallback = classifyActionKindFromText(
+      primaryIdentity,
+      `${String(input.description || '')} ${onlineSnippets}`,
+      String(input.category || '')
+    );
+
+    return persistProfile({
+      signature,
+      productId: input.id,
+      actionKind: fallback.actionKind,
+      verifiedProductType: fallback.verifiedProductType,
+      title: '',
+      activeLabel: '',
+      tap2Prompt: '',
+      specBadge: String(input.capacitySpec || '').slice(0, 28),
+      source: onlineSnippets ? 'live-web-search' : 'metadata-rules',
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  function scheduleAutoProductMotionAnalysis(watch: StoredWatch): void {
+    void analyzeAndStoreProductMotion(
+      {
+        id: watch.id,
+        imageUrl: watch.image_url,
+        productName: watch.product_name,
+        brand: watch.brand,
+        model: watch.model,
+        category: watch.category,
+        color: watch.color,
+        description: watch.description,
+        capacitySpec: watch.capacity_spec,
+        connectivity: watch.connectivity,
+      },
+      true
+    ).catch((err) => {
+      console.warn('Background AI animation analysis failed:', err);
+    });
+  }
+
+  // AI Vision + Online Product Analyzer: inspects real product photo + specs and persists tailored animation profile for all visitors
   app.post('/api/showcase/identify-product', async (req: Request, res: Response) => {
     try {
       const {
+        id,
         imageUrl,
         productName,
         brand,
@@ -3665,130 +4068,36 @@ Classify accurately based on what this product actually is in real life:
         description,
         capacitySpec,
         connectivity,
+        forceRefresh,
       } = req.body ?? {};
 
-      const querySubject = [brand, model, productName]
-        .filter((s) => typeof s === 'string' && s.trim() && s.trim().toLowerCase() !== 'generic')
-        .join(' ')
-        .trim();
-      const fullLabel = [brand, model, productName, category, color, capacitySpec, connectivity]
-        .filter((s) => typeof s === 'string' && s.trim())
-        .join(' · ');
-
-      // 1. Run live online web search FIRST for exact real-world product context
-      const onlineSnippets = await fetchLiveWebSearchSnippets(
-        querySubject || String(productName || model || '')
+      const profile = await analyzeAndStoreProductMotion(
+        {
+          id: typeof id === 'string' ? id : undefined,
+          imageUrl: typeof imageUrl === 'string' ? imageUrl : undefined,
+          productName: typeof productName === 'string' ? productName : undefined,
+          brand: typeof brand === 'string' ? brand : undefined,
+          model: typeof model === 'string' ? model : undefined,
+          category: typeof category === 'string' ? category : undefined,
+          color: typeof color === 'string' ? color : undefined,
+          description: typeof description === 'string' ? description : undefined,
+          capacitySpec: typeof capacitySpec === 'string' ? capacitySpec : undefined,
+          connectivity: typeof connectivity === 'string' ? connectivity : undefined,
+        },
+        Boolean(forceRefresh)
       );
 
-      // 2. Try Gemini Google Search Grounding + Vision refinement when available
-      try {
-        let resolvedBase64 = '';
-        let resolvedMime = 'image/jpeg';
-        if (typeof imageUrl === 'string' && imageUrl.trim()) {
-          const parsedData = parseDataUrl(imageUrl.trim());
-          if (parsedData) {
-            resolvedBase64 = parsedData.data;
-            resolvedMime = parsedData.mimeType;
-          } else if (isSafeExternalUrl(imageUrl.trim())) {
-            const fetched = await fetchVerifiedImageBytes(imageUrl.trim(), 3500);
-            if (fetched) {
-              resolvedBase64 = fetched.buffer.toString('base64');
-              resolvedMime = fetched.contentType;
-            }
-          }
-        }
-
-        const parts: Part[] = [];
-        if (resolvedBase64) {
-          parts.push({
-            inlineData: {
-              mimeType: resolvedMime,
-              data: resolvedBase64,
-            },
-          });
-        }
-
-        parts.push({
-          text: `You are a product specialist for "New Chiko Watch & Electronics".
-Inspect the online search snippets AND product photo/details below to accurately identify what "${querySubject || fullLabel}" really is.
-Product details: ${fullLabel}
-Description: ${String(description || '').slice(0, 320)}
-Online search snippets: ${onlineSnippets.slice(0, 1400) || '(none)'}
-
-CRITICAL RULES:
-- Any vape, pod kit, disposable puff bar, e-cigarette, humidifier, or aroma diffuser MUST be "vapor" — NEVER "power", even if it mentions "1000mAh" or "Type-C"!
-- Any water bottle, thermos, tumbler, flask, mug, perfume, or spray MUST be "liquid".
-- Any speaker, earbuds, neckband, or headphones MUST be "audio" — NEVER "power".
-- Only classify as "power" if its primary purpose is charging other devices (power bank, wall charger, charging cable, adapter).
-- Mini fan / air cooler / hair dryer -> "fan".
-- Flashlight / lamp / ring light / lantern -> "light".
-- Analog / digital / smartwatch -> "watch".
-- Everything else -> "universal".
-
-Return ONLY raw JSON:
-{"actionKind":"vapor"|"liquid"|"power"|"audio"|"fan"|"light"|"watch"|"universal","verifiedProductType":"2-5 word real type","title":"2-3 word studio title","activeLabel":"2-4 word active label","tap2Prompt":"short tap prompt"}`,
-        });
-
-        const ai = createGeminiClient();
-        const response = await generateWithFallbackModel(ai, {
-          contents: { parts },
-          config: {
-            tools: [{ googleSearch: {} }],
-          },
-        });
-
-        const rawText = (response.text || '').trim();
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-          const validKinds = new Set([
-            'vapor',
-            'liquid',
-            'power',
-            'audio',
-            'fan',
-            'light',
-            'watch',
-            'universal',
-          ]);
-          const rawKind =
-            typeof parsed.actionKind === 'string' ? parsed.actionKind.trim().toLowerCase() : '';
-          if (validKinds.has(rawKind)) {
-            return res.json({
-              verified: true,
-              source: 'gemini-online',
-              actionKind: rawKind,
-              verifiedProductType:
-                typeof parsed.verifiedProductType === 'string'
-                  ? parsed.verifiedProductType.trim().slice(0, 80)
-                  : '',
-              title: typeof parsed.title === 'string' ? parsed.title.trim().slice(0, 40) : '',
-              activeLabel:
-                typeof parsed.activeLabel === 'string'
-                  ? parsed.activeLabel.trim().slice(0, 48)
-                  : '',
-              tap2Prompt:
-                typeof parsed.tap2Prompt === 'string' ? parsed.tap2Prompt.trim().slice(0, 56) : '',
-            });
-          }
-        }
-      } catch (aiErr) {
-        console.warn('Gemini online search fallback to live web snippets:', extractHttpStatus(aiErr));
-      }
-
-      // 3. Always-on Live Web Search Classification Fallback (0 API quota dependency!)
-      const webClassification = classifyActionKindFromOnlineText(
-        `${fullLabel} ${String(description || '')} ${onlineSnippets}`,
-        String(category || '')
-      );
       return res.json({
         verified: true,
-        source: onlineSnippets ? 'live-web-search' : 'metadata-rules',
-        actionKind: webClassification.actionKind,
-        verifiedProductType: webClassification.verifiedProductType,
-        title: '',
-        activeLabel: '',
-        tap2Prompt: '',
+        source: profile.source,
+        actionKind: profile.actionKind,
+        verifiedProductType: profile.verifiedProductType,
+        title: profile.title,
+        activeLabel: profile.activeLabel,
+        tap2Prompt: profile.tap2Prompt,
+        accentHex: profile.accentHex || '',
+        secondaryHex: profile.secondaryHex || '',
+        specBadge: profile.specBadge || '',
       });
     } catch (error) {
       const status = extractHttpStatus(error);
