@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Minus, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Heart, Minus, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { motion, useMotionTemplate, useMotionValue, useSpring, useTransform } from 'motion/react';
 import { WatchItem } from '../types/watch';
 import { TripleTapPrice } from './TripleTapPrice';
@@ -9,6 +9,8 @@ interface WatchCardProps {
   watch: WatchItem;
   isAdmin: boolean;
   index?: number;
+  isSaved?: boolean;
+  onToggleSave?: (id: string) => void;
   onSelect: (watch: WatchItem) => void;
   onAdjustStock?: (id: string, delta: number) => void;
   onEdit?: (watch: WatchItem) => void;
@@ -19,6 +21,8 @@ export function WatchCard({
   watch,
   isAdmin,
   index = 0,
+  isSaved = false,
+  onToggleSave,
   onSelect,
   onAdjustStock,
   onEdit,
@@ -105,7 +109,7 @@ export function WatchCard({
         {/* Compact 5:4 3D Floating Visual Frame */}
         <motion.div
           style={{ z: imageZ, transformStyle: 'preserve-3d' }}
-          className="relative aspect-[5/4] w-full rounded-t-xl bg-[#F4F4F5] overflow-hidden border-b border-zinc-100"
+          className="relative aspect-[5/4] w-full rounded-t-xl bg-[radial-gradient(circle_at_50%_36%,#FFFFFF_0%,#F6F4EF_64%,#ECE8E0_100%)] overflow-hidden border-b border-stone-200/70"
         >
           <WatchImage
             src={watch.image_url}
@@ -115,6 +119,10 @@ export function WatchCard({
             category={watch.category}
             iconSize={24}
             className="transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-110"
+          />
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 card-luxury-sheen"
           />
           <motion.div
             aria-hidden="true"
@@ -128,6 +136,27 @@ export function WatchCard({
             >
               Sold Out
             </span>
+          )}
+          {onToggleSave && (
+            <motion.button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleSave(watch.id);
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              whileTap={{ scale: 0.78 }}
+              style={{ transform: 'translateZ(22px)' }}
+              className={`absolute top-1.5 right-1.5 w-7 h-7 rounded-full flex items-center justify-center backdrop-blur-sm transition-all cursor-pointer ${
+                isSaved
+                  ? 'bg-white/95 text-rose-600 shadow-xs opacity-100'
+                  : 'bg-white/75 text-zinc-500 hover:text-zinc-950 opacity-85 sm:opacity-0 sm:group-hover:opacity-100'
+              }`}
+              aria-label={isSaved ? 'Remove from saved shortlist' : 'Save to shortlist'}
+              title={isSaved ? 'Saved' : 'Save item'}
+            >
+              <Heart size={13} className={isSaved ? 'fill-rose-600' : ''} />
+            </motion.button>
           )}
         </motion.div>
 

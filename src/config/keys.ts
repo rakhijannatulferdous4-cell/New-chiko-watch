@@ -63,11 +63,41 @@ export function getServerConfig() {
     nodeEnv.SUPABASE_ANON_KEY ||
     nodeEnv.VITE_SUPABASE_ANON_KEY ||
     '';
+
+  let cloudName =
+    nodeEnv.CLOUDINARY_CLOUD_NAME ||
+    nodeEnv.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME ||
+    nodeEnv.VITE_CLOUDINARY_CLOUD_NAME ||
+    'zxamensn';
+  let cloudApiKey = nodeEnv.CLOUDINARY_API_KEY || '';
+  let cloudApiSecret = nodeEnv.CLOUDINARY_API_SECRET || '';
+  const cloudUploadPreset =
+    nodeEnv.CLOUDINARY_UPLOAD_PRESET ||
+    nodeEnv.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET ||
+    nodeEnv.VITE_CLOUDINARY_UPLOAD_PRESET ||
+    '';
+
+  const rawCloudUrl = (nodeEnv.CLOUDINARY_URL || '').trim();
+  if (rawCloudUrl.startsWith('cloudinary://')) {
+    try {
+      const parsed = new URL(rawCloudUrl);
+      if (parsed.hostname) cloudName = parsed.hostname;
+      if (parsed.username) cloudApiKey = decodeURIComponent(parsed.username);
+      if (parsed.password) cloudApiSecret = decodeURIComponent(parsed.password);
+    } catch {
+      // ignore malformed CLOUDINARY_URL
+    }
+  }
+
   return {
     GEMINI_API_KEY: nodeEnv.GEMINI_API_KEY || '',
     ADMIN_USERNAME: nodeEnv.ADMIN_USERNAME || 'admin',
     ADMIN_PASSWORD: nodeEnv.ADMIN_PASSWORD || 'chiko123',
     SUPABASE_URL: supabaseUrl,
     SUPABASE_KEY: supabaseKey,
+    CLOUDINARY_CLOUD_NAME: cloudName.trim(),
+    CLOUDINARY_API_KEY: cloudApiKey.trim(),
+    CLOUDINARY_API_SECRET: cloudApiSecret.trim(),
+    CLOUDINARY_UPLOAD_PRESET: cloudUploadPreset.trim(),
   };
 }

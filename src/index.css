@@ -9,13 +9,18 @@
 @layer base {
   html {
     font-family: var(--font-sans);
-    background-color: #FAFAFA;
+    background-color: #F7F5F0;
     color: #09090B;
     scroll-behavior: smooth;
   }
 
   body {
-    background-color: #FAFAFA;
+    background-color: #F7F5F0;
+    background-image:
+      radial-gradient(ellipse 85% 48% at 15% -6%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0) 64%),
+      radial-gradient(ellipse 75% 44% at 88% 0%, rgba(235, 228, 214, 0.55) 0%, rgba(235, 228, 214, 0) 62%),
+      linear-gradient(180deg, #FAF8F4 0%, #F4F1EA 52%, #F7F5F0 100%);
+    background-attachment: fixed;
     color: #09090B;
     overflow-x: hidden;
   }
@@ -60,6 +65,33 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(9, 9, 11, 0.35);
+}
+
+/* Luxury specular sheen sweep on hovered product cards */
+@keyframes chikoSheenSweep {
+  0% {
+    background-position: -180% 0;
+  }
+  100% {
+    background-position: 220% 0;
+  }
+}
+
+.card-luxury-sheen {
+  background-image: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 32%,
+    rgba(255, 255, 255, 0.45) 48%,
+    rgba(255, 255, 255, 0) 64%
+  );
+  background-size: 240% 100%;
+  animation: chikoSheenSweep 1.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-luxury-sheen {
+    animation: none;
+  }
 }
 
 @media print {

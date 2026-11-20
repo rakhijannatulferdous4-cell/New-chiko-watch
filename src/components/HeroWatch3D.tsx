@@ -1,88 +1,52 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Watch } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  Pause,
+  Play,
+  Shuffle,
+  Sparkles,
+  Watch,
+} from 'lucide-react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import {
+  BuiltModel,
+  createShowcaseModel,
+  ResourceTracker,
+  SharedShowcaseMaterials,
+  SHOWCASE_CATEGORY_GROUPS,
+  SHOWCASE_CHOREOGRAPHIES,
+  SHOWCASE_FINISHES,
+  SHOWCASE_MODELS,
+  ShowcaseCategoryGroup,
+  ShowcaseModelId,
+} from '../services/heroShowcase3D';
 
-function createDialTexture(maxAnisotropy: number): THREE.CanvasTexture {
-  const size = 512;
+// Pre-allocated math helpers (zero GC inside animation loop)
+const _colorPrimary = new THREE.Color();
+const _colorSecondary = new THREE.Color();
+const _colorAccent = new THREE.Color();
+const _colorRim = new THREE.Color();
+const _particleDummy = new THREE.Object3D();
+
+function createContactShadowTexture(): THREE.CanvasTexture {
+  const size = 128;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
-
   if (ctx) {
-    const cx = size / 2;
-    const cy = size / 2;
-
-    // Deep sunburst obsidian dial
-    const grad = ctx.createRadialGradient(cx, cy, 20, cx, cy, size * 0.48);
-    grad.addColorStop(0, '#1c1c21');
-    grad.addColorStop(0.65, '#0b0b0e');
-    grad.addColorStop(1, '#050507');
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 4, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, 'rgba(9, 9, 11, 0.26)');
+    grad.addColorStop(0.55, 'rgba(9, 9, 11, 0.08)');
+    grad.addColorStop(1, 'rgba(9, 9, 11, 0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
-
-    // Subtle concentric guilloche rings
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
-    for (let r = 48; r <= 200; r += 26) {
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // Outer minute track
-    for (let i = 0; i < 60; i++) {
-      const angle = (i / 60) * Math.PI * 2;
-      const isHour = i % 5 === 0;
-      const rOuter = 224;
-      const rInner = isHour ? 206 : 215;
-      ctx.strokeStyle = isHour ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.34)';
-      ctx.lineWidth = isHour ? 2.5 : 1.2;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(angle) * rInner, cy + Math.sin(angle) * rInner);
-      ctx.lineTo(cx + Math.cos(angle) * rOuter, cy + Math.sin(angle) * rOuter);
-      ctx.stroke();
-    }
-
-    // Chronograph sub-dial rings
-    const subOffsets = [
-      { x: cx - 70, y: cy },
-      { x: cx + 70, y: cy },
-      { x: cx, y: cy + 72 },
-    ];
-    for (const sub of subOffsets) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(sub.x, sub.y, 40, 0, Math.PI * 2);
-      ctx.stroke();
-
-      for (let t = 0; t < 12; t++) {
-        const a = (t / 12) * Math.PI * 2;
-        ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(sub.x + Math.cos(a) * 32, sub.y + Math.sin(a) * 32);
-        ctx.lineTo(sub.x + Math.cos(a) * 38, sub.y + Math.sin(a) * 38);
-        ctx.stroke();
-      }
-    }
-
-    // Crisp monochrome dial wordmark
-    ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'center';
-    ctx.font = '700 22px "Plus Jakarta Sans", system-ui, sans-serif';
-    ctx.fillText('CHIKO', cx, cy - 82);
-
-    ctx.fillStyle = 'rgba(255,255,255,0.58)';
-    ctx.font = '600 11px "JetBrains Mono", monospace';
-    ctx.fillText('CHRONOGRAPH', cx, cy - 62);
   }
-
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = Math.min(8, maxAnisotropy || 1);
   tex.needsUpdate = true;
   return tex;
 }
@@ -90,6 +54,55 @@ function createDialTexture(maxAnisotropy: number): THREE.CanvasTexture {
 export function HeroWatch3D() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [webglFailed, setWebglFailed] = useState(false);
+
+  const [categoryGroup, setCategoryGroup] = useState<ShowcaseCategoryGroup>('All');
+  const [modelIdx, setModelIdx] = useState(0);
+  const [finishIdx, setFinishIdx] = useState(0);
+  const [choreoIdx, setChoreoIdx] = useState(0);
+  const [autoCycle, setAutoCycle] = useState(true);
+
+  const filteredModels = useMemo(() => {
+    if (categoryGroup === 'All') return SHOWCASE_MODELS;
+    return SHOWCASE_MODELS.filter((m) => m.group === categoryGroup);
+  }, [categoryGroup]);
+
+  const safeIdx = filteredModels.length > 0 ? modelIdx % filteredModels.length : 0;
+  const currentModel = filteredModels[safeIdx] || SHOWCASE_MODELS[0];
+  const currentChoreo = SHOWCASE_CHOREOGRAPHIES[choreoIdx] || SHOWCASE_CHOREOGRAPHIES[0];
+
+  // Live mutable refs so WebGL never re-initializes on React state changes
+  const activeModelRef = useRef(currentModel);
+  const activeFinishRef = useRef(0);
+  const activeChoreoRef = useRef(0);
+  const isUserDraggingRef = useRef(false);
+
+  useEffect(() => {
+    activeModelRef.current = currentModel;
+  }, [currentModel]);
+
+  useEffect(() => {
+    activeFinishRef.current = finishIdx;
+  }, [finishIdx]);
+
+  useEffect(() => {
+    activeChoreoRef.current = choreoIdx;
+  }, [choreoIdx]);
+
+  // Smoothly auto-cycle through all 32 completely unique 3D electronics & watch products
+  useEffect(() => {
+    if (!autoCycle || filteredModels.length <= 1) return;
+    const timer = window.setInterval(() => {
+      if (isUserDraggingRef.current) return;
+      setModelIdx((prev) => {
+        const next = (prev + 1) % filteredModels.length;
+        if (next % 2 === 0) {
+          setFinishIdx((f) => (f + 1) % SHOWCASE_FINISHES.length);
+        }
+        return next;
+      });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [autoCycle, filteredModels.length]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -110,7 +123,7 @@ export function HeroWatch3D() {
     })();
 
     const width = Math.max(container.clientWidth, 240);
-    const height = Math.max(container.clientHeight, 160);
+    const height = Math.max(container.clientHeight, 220);
 
     let renderer: THREE.WebGLRenderer;
     let envRT: THREE.WebGLRenderTarget;
@@ -126,13 +139,12 @@ export function HeroWatch3D() {
     }
 
     const scene = new THREE.Scene();
-
-    const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 50);
-    camera.position.set(0, 0.15, 5.2);
+    const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 50);
+    camera.position.set(0, 0.04, 5.45);
 
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.16;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height, false);
     renderer.domElement.style.position = 'absolute';
@@ -148,236 +160,204 @@ export function HeroWatch3D() {
     scene.environment = envRT.texture;
     pmremGenerator.dispose();
 
-    // Studio 3-point lighting rig
-    const hemiLight = new THREE.HemisphereLight(0xf4f4f5, 0x09090b, 0.9);
+    // Balanced warm/cool studio 3-point lighting rig
+    const hemiLight = new THREE.HemisphereLight(0xf1f5f9, 0x18181b, 0.96);
     scene.add(hemiLight);
 
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
-    keyLight.position.set(3.5, 4.5, 5);
+    const keyLight = new THREE.DirectionalLight(0xfff7ed, 2.5);
+    keyLight.position.set(3.8, 4.8, 5.2);
     scene.add(keyLight);
 
-    const rimLight = new THREE.DirectionalLight(0xd4d4d8, 1.5);
-    rimLight.position.set(-4, -2, -3);
+    const rimLight = new THREE.DirectionalLight(0xffe4b5, 1.8);
+    rimLight.position.set(-4.2, -1.5, -3.2);
     scene.add(rimLight);
 
-    // Track geometries & materials for clean disposal
     const geometries: THREE.BufferGeometry[] = [];
     const materials: THREE.Material[] = [];
     const textures: THREE.Texture[] = [];
-
-    const regGeo = <T extends THREE.BufferGeometry>(g: T): T => {
-      geometries.push(g);
-      return g;
+    const tracker: ResourceTracker = {
+      geo: <T extends THREE.BufferGeometry>(g: T): T => {
+        geometries.push(g);
+        return g;
+      },
+      mat: <T extends THREE.Material>(m: T): T => {
+        materials.push(m);
+        return m;
+      },
+      tex: <T extends THREE.Texture>(t: T): T => {
+        textures.push(t);
+        return t;
+      },
     };
-    const regMat = <T extends THREE.Material>(m: T): T => {
-      materials.push(m);
-      return m;
+
+    const initialFinish = SHOWCASE_FINISHES[0];
+    const sharedMats: SharedShowcaseMaterials = {
+      primaryMetal: tracker.mat(
+        new THREE.MeshPhysicalMaterial({
+          color: initialFinish.primaryHex,
+          metalness: initialFinish.metalness,
+          roughness: initialFinish.roughness,
+          anisotropy: 0.7,
+          clearcoat: 0.55,
+          clearcoatRoughness: 0.14,
+        })
+      ),
+      secondaryBody: tracker.mat(
+        new THREE.MeshPhysicalMaterial({
+          color: initialFinish.secondaryHex,
+          metalness: 0.76,
+          roughness: 0.34,
+          clearcoat: 0.3,
+          clearcoatRoughness: 0.22,
+        })
+      ),
+      matteTrim: tracker.mat(
+        new THREE.MeshStandardMaterial({
+          color: 0x151518,
+          metalness: 0.18,
+          roughness: 0.72,
+        })
+      ),
+      polishedChrome: tracker.mat(
+        new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          metalness: 0.98,
+          roughness: 0.08,
+        })
+      ),
+      accentGlow: tracker.mat(
+        new THREE.MeshStandardMaterial({
+          color: initialFinish.accentHex,
+          emissive: new THREE.Color(initialFinish.accentHex),
+          emissiveIntensity: 0.45,
+          metalness: 0.78,
+          roughness: 0.22,
+        })
+      ),
+      glass: tracker.mat(
+        new THREE.MeshPhysicalMaterial({
+          color: 0xffffff,
+          metalness: 0.0,
+          roughness: 0.04,
+          transparent: true,
+          opacity: 0.22,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.04,
+          depthWrite: false,
+        })
+      ),
+      orbitRingMat: tracker.mat(
+        new THREE.MeshBasicMaterial({
+          color: 0x8a7962,
+          transparent: true,
+          opacity: 0.26,
+        })
+      ),
     };
 
-    const brushedSteelMat = regMat(
-      new THREE.MeshPhysicalMaterial({
-        color: 0xe4e4e7,
-        metalness: 0.94,
+    const stageRoot = new THREE.Group();
+    scene.add(stageRoot);
+
+    const modelPivot = new THREE.Group();
+    stageRoot.add(modelPivot);
+
+    // Lazy cache of all 32 distinct bespoke 3D hardware models (instant startup!)
+    const maxAniso = renderer.capabilities.getMaxAnisotropy();
+    const builtCache = new Map<ShowcaseModelId, BuiltModel>();
+    const modelScales = new Map<ShowcaseModelId, number>();
+
+    const ensureModelBuilt = (id: ShowcaseModelId): BuiltModel => {
+      const existing = builtCache.get(id);
+      if (existing) return existing;
+      const built = createShowcaseModel(id, sharedMats, tracker, maxAniso);
+      built.root.scale.setScalar(0.001);
+      built.root.visible = false;
+      modelPivot.add(built.root);
+      builtCache.set(id, built);
+      modelScales.set(id, 0.001);
+      return built;
+    };
+
+    // Build initial model immediately at full scale
+    const initialModel = ensureModelBuilt(activeModelRef.current.id);
+    initialModel.root.visible = true;
+    initialModel.root.scale.setScalar(0.95);
+    modelScales.set(activeModelRef.current.id, 0.95);
+
+    // Triple Counter-Rotating Precision Astrolabe Rings
+    const ringOuter = new THREE.Mesh(
+      tracker.geo(new THREE.TorusGeometry(1.68, 0.007, 12, 96)),
+      sharedMats.orbitRingMat
+    );
+    ringOuter.rotation.set(Math.PI * 0.38, -Math.PI * 0.14, 0);
+    stageRoot.add(ringOuter);
+
+    const ringMid = new THREE.Mesh(
+      tracker.geo(new THREE.TorusGeometry(1.48, 0.0055, 10, 84)),
+      sharedMats.orbitRingMat
+    );
+    ringMid.rotation.set(-Math.PI * 0.34, Math.PI * 0.24, 0);
+    stageRoot.add(ringMid);
+
+    const ringAccentArc = new THREE.Mesh(
+      tracker.geo(new THREE.TorusGeometry(1.58, 0.013, 10, 64, Math.PI * 0.62)),
+      sharedMats.accentGlow
+    );
+    ringAccentArc.rotation.set(Math.PI * 0.42, 0.2, 0);
+    stageRoot.add(ringAccentArc);
+
+    // 110 Instanced Orbital Studio Shimmer Particles
+    const PARTICLE_COUNT = 110;
+    const particleGeo = tracker.geo(new THREE.OctahedronGeometry(0.02, 0));
+    const particleMat = tracker.mat(
+      new THREE.MeshStandardMaterial({
+        color: 0xd4b26a,
+        metalness: 0.9,
         roughness: 0.2,
-        clearcoat: 0.4,
-        clearcoatRoughness: 0.15,
-      })
-    );
-
-    const darkTitaniumMat = regMat(
-      new THREE.MeshStandardMaterial({
-        color: 0x18181b,
-        metalness: 0.82,
-        roughness: 0.32,
-      })
-    );
-
-    const matteStrapMat = regMat(
-      new THREE.MeshStandardMaterial({
-        color: 0x121215,
-        metalness: 0.25,
-        roughness: 0.68,
-      })
-    );
-
-    const polishedChromeMat = regMat(
-      new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        metalness: 0.98,
-        roughness: 0.08,
-      })
-    );
-
-    const glassMat = regMat(
-      new THREE.MeshPhysicalMaterial({
-        color: 0xffffff,
-        metalness: 0.0,
-        roughness: 0.05,
         transparent: true,
-        opacity: 0.18,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.04,
-        depthWrite: false,
+        opacity: 0.62,
       })
     );
+    const particles = new THREE.InstancedMesh(particleGeo, particleMat, PARTICLE_COUNT);
+    particles.frustumCulled = false;
+    const pRadii = new Float32Array(PARTICLE_COUNT);
+    const pAngles = new Float32Array(PARTICLE_COUNT);
+    const pSpeeds = new Float32Array(PARTICLE_COUNT);
+    const pHeights = new Float32Array(PARTICLE_COUNT);
+    const pScales = new Float32Array(PARTICLE_COUNT);
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      pRadii[i] = 1.4 + ((i * 37) % 100) * 0.011;
+      pAngles[i] = (i / PARTICLE_COUNT) * Math.PI * 2;
+      pSpeeds[i] = (i % 2 === 0 ? 1 : -1) * (0.14 + ((i * 19) % 10) * 0.024);
+      pHeights[i] = (((i * 29) % 100) / 100 - 0.5) * 2.1;
+      pScales[i] = 0.45 + ((i * 13) % 10) * 0.09;
+    }
+    stageRoot.add(particles);
 
-    const dialTex = createDialTexture(renderer.capabilities.getMaxAnisotropy());
-    textures.push(dialTex);
-
-    const dialMat = regMat(
-      new THREE.MeshStandardMaterial({
-        map: dialTex,
-        metalness: 0.35,
-        roughness: 0.45,
-      })
+    // Soft Grounded Contact Shadow Plane
+    const shadowTex = tracker.tex(createContactShadowTexture());
+    const contactShadow = new THREE.Mesh(
+      tracker.geo(new THREE.PlaneGeometry(2.5, 2.5)),
+      tracker.mat(
+        new THREE.MeshBasicMaterial({
+          map: shadowTex,
+          transparent: true,
+          depthWrite: false,
+          opacity: 0.68,
+        })
+      )
     );
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.position.y = -1.58;
+    scene.add(contactShadow);
 
-    // Master watch group
-    const watchRoot = new THREE.Group();
-    scene.add(watchRoot);
-
-    const watchGroup = new THREE.Group();
-    watchRoot.add(watchGroup);
-
-    // 1. Main circular watch case
-    const caseGeo = regGeo(new THREE.CylinderGeometry(1.12, 1.08, 0.28, 64));
-    caseGeo.rotateX(Math.PI / 2);
-    const caseMesh = new THREE.Mesh(caseGeo, brushedSteelMat);
-    watchGroup.add(caseMesh);
-
-    // 2. Sculpted dark tachymeter bezel ring
-    const bezelGeo = regGeo(new THREE.TorusGeometry(1.03, 0.1, 24, 64));
-    const bezelMesh = new THREE.Mesh(bezelGeo, darkTitaniumMat);
-    bezelMesh.position.z = 0.12;
-    watchGroup.add(bezelMesh);
-
-    const innerRimGeo = regGeo(new THREE.TorusGeometry(0.95, 0.025, 16, 64));
-    const innerRimMesh = new THREE.Mesh(innerRimGeo, polishedChromeMat);
-    innerRimMesh.position.z = 0.14;
-    watchGroup.add(innerRimMesh);
-
-    // 3. Dial face
-    const dialGeo = regGeo(new THREE.CircleGeometry(0.96, 64));
-    const dialMesh = new THREE.Mesh(dialGeo, dialMat);
-    dialMesh.position.z = 0.145;
-    watchGroup.add(dialMesh);
-
-    // 4. 12 Applied chrome hour indices via InstancedMesh
-    const indexGeo = regGeo(new THREE.BoxGeometry(0.036, 0.11, 0.025));
-    const indicesInstanced = new THREE.InstancedMesh(indexGeo, polishedChromeMat, 12);
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      const r = 0.78;
-      dummy.position.set(Math.sin(a) * r, Math.cos(a) * r, 0.16);
-      dummy.rotation.set(0, 0, -a);
-      dummy.scale.set(i % 3 === 0 ? 1.35 : 1, i % 3 === 0 ? 1.15 : 1, 1);
-      dummy.updateMatrix();
-      indicesInstanced.setMatrixAt(i, dummy.matrix);
-    }
-    indicesInstanced.instanceMatrix.needsUpdate = true;
-    indicesInstanced.computeBoundingSphere();
-    watchGroup.add(indicesInstanced);
-
-    // 5. Watch hands (Hour, Minute, Second) + Center Pinion
-    const hourPivot = new THREE.Group();
-    hourPivot.position.z = 0.18;
-    const hourGeo = regGeo(new THREE.BoxGeometry(0.055, 0.48, 0.018));
-    hourGeo.translate(0, 0.19, 0);
-    hourPivot.add(new THREE.Mesh(hourGeo, polishedChromeMat));
-    watchGroup.add(hourPivot);
-
-    const minPivot = new THREE.Group();
-    minPivot.position.z = 0.2;
-    const minGeo = regGeo(new THREE.BoxGeometry(0.038, 0.68, 0.015));
-    minGeo.translate(0, 0.28, 0);
-    minPivot.add(new THREE.Mesh(minGeo, polishedChromeMat));
-    watchGroup.add(minPivot);
-
-    const secPivot = new THREE.Group();
-    secPivot.position.z = 0.218;
-    const secGeo = regGeo(new THREE.BoxGeometry(0.014, 0.84, 0.01));
-    secGeo.translate(0, 0.26, 0);
-    secPivot.add(new THREE.Mesh(secGeo, brushedSteelMat));
-    watchGroup.add(secPivot);
-
-    const pinionGeo = regGeo(new THREE.CylinderGeometry(0.06, 0.06, 0.06, 24));
-    pinionGeo.rotateX(Math.PI / 2);
-    const pinionMesh = new THREE.Mesh(pinionGeo, polishedChromeMat);
-    pinionMesh.position.z = 0.2;
-    watchGroup.add(pinionMesh);
-
-    // 6. Fluted Crown & Chrono Pushers on right flank
-    const crownGeo = regGeo(new THREE.CylinderGeometry(0.11, 0.11, 0.14, 24));
-    crownGeo.rotateZ(Math.PI / 2);
-    const crownMesh = new THREE.Mesh(crownGeo, brushedSteelMat);
-    crownMesh.position.set(1.17, 0, 0);
-    watchGroup.add(crownMesh);
-
-    const pusherGeo = regGeo(new THREE.CylinderGeometry(0.055, 0.055, 0.11, 16));
-    pusherGeo.rotateZ(Math.PI / 2);
-    const topPusher = new THREE.Mesh(pusherGeo, polishedChromeMat);
-    topPusher.position.set(1.08, 0.44, 0);
-    topPusher.rotation.z = 0.35;
-    watchGroup.add(topPusher);
-
-    const botPusher = new THREE.Mesh(pusherGeo, polishedChromeMat);
-    botPusher.position.set(1.08, -0.44, 0);
-    botPusher.rotation.z = -0.35;
-    watchGroup.add(botPusher);
-
-    // 7. Lugs & Articulated Matte Strap Links (top & bottom)
-    const lugGeo = regGeo(new THREE.BoxGeometry(0.16, 0.42, 0.22));
-    const lugOffsets = [
-      { x: -0.48, y: 1.1, rx: 0.12 },
-      { x: 0.48, y: 1.1, rx: 0.12 },
-      { x: -0.48, y: -1.1, rx: -0.12 },
-      { x: 0.48, y: -1.1, rx: -0.12 },
-    ];
-    for (const l of lugOffsets) {
-      const lug = new THREE.Mesh(lugGeo, brushedSteelMat);
-      lug.position.set(l.x, l.y, -0.02);
-      lug.rotation.x = l.rx;
-      watchGroup.add(lug);
+    if (!isSoftwareGl) {
+      renderer.compile(scene, camera);
     }
 
-    const linkGeo = regGeo(new THREE.BoxGeometry(0.84, 0.22, 0.14));
-    for (let i = 0; i < 4; i++) {
-      const topLink = new THREE.Mesh(linkGeo, i % 2 === 0 ? matteStrapMat : darkTitaniumMat);
-      topLink.position.set(0, 1.18 + i * 0.24, -0.08 - i * 0.07);
-      topLink.rotation.x = 0.22 + i * 0.12;
-      watchGroup.add(topLink);
-
-      const botLink = new THREE.Mesh(linkGeo, i % 2 === 0 ? matteStrapMat : darkTitaniumMat);
-      botLink.position.set(0, -1.18 - i * 0.24, -0.08 - i * 0.07);
-      botLink.rotation.x = -(0.22 + i * 0.12);
-      watchGroup.add(botLink);
-    }
-
-    // 8. Domed Sapphire Glass
-    const crystalGeo = regGeo(new THREE.CircleGeometry(0.95, 48));
-    const crystalMesh = new THREE.Mesh(crystalGeo, glassMat);
-    crystalMesh.position.z = 0.235;
-    crystalMesh.renderOrder = 10;
-    watchGroup.add(crystalMesh);
-
-    // 9. Orbital precision gyroscope ring
-    const orbitMat = regMat(
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.22,
-      })
-    );
-    const orbitGeo = regGeo(new THREE.TorusGeometry(1.55, 0.009, 12, 96));
-    const orbitRing = new THREE.Mesh(orbitGeo, orbitMat);
-    orbitRing.rotation.x = Math.PI * 0.36;
-    orbitRing.rotation.y = -Math.PI * 0.15;
-    watchRoot.add(orbitRing);
-
-    // Interactive pointer & drag state
-    let targetRotX = 0.18;
-    let targetRotY = -0.35;
+    // Pointer drag & hover tilt
+    let targetRotX = 0.14;
+    let targetRotY = -0.22;
     let isDragging = false;
     let lastX = 0;
     let lastY = 0;
@@ -386,6 +366,7 @@ export function HeroWatch3D() {
 
     const onPointerDown = (e: PointerEvent) => {
       isDragging = true;
+      isUserDraggingRef.current = true;
       lastX = e.clientX;
       lastY = e.clientY;
     };
@@ -393,24 +374,24 @@ export function HeroWatch3D() {
     const onPointerMove = (e: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
-
       if (isDragging) {
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
         lastX = e.clientX;
         lastY = e.clientY;
-        dragOffsetY += dx * 0.012;
-        dragOffsetX = THREE.MathUtils.clamp(dragOffsetX + dy * 0.01, -0.7, 0.7);
+        dragOffsetY += dx * 0.013;
+        dragOffsetX = THREE.MathUtils.clamp(dragOffsetX + dy * 0.01, -0.78, 0.78);
       } else if (e.pointerType === 'mouse') {
         const nx = (e.clientX - rect.left) / rect.width - 0.5;
         const ny = (e.clientY - rect.top) / rect.height - 0.5;
         targetRotY = nx * 0.85;
-        targetRotX = -ny * 0.65;
+        targetRotX = -ny * 0.55;
       }
     };
 
     const onPointerUp = () => {
       isDragging = false;
+      isUserDraggingRef.current = false;
     };
 
     const canvas = renderer.domElement;
@@ -418,21 +399,20 @@ export function HeroWatch3D() {
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 
-    // Animation loop & ResizeObserver state
     let disposed = false;
     let rafId = 0;
     let timeoutId = 0;
     let resizeRaf = 0;
     let lastW = width;
     let lastH = height;
+    let currentExplode = 0;
     const clock = new THREE.Clock();
 
-    // Defer ResizeObserver buffer updates to the next animation frame & avoid CSS mutating (updateStyle = false)
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[entries.length - 1];
       if (!entry) return;
       const w = Math.max(Math.round(entry.contentRect.width), 160);
-      const h = Math.max(Math.round(entry.contentRect.height), 120);
+      const h = Math.max(Math.round(entry.contentRect.height), 160);
       if (w === lastW && h === lastH) return;
       lastW = w;
       lastH = h;
@@ -472,33 +452,127 @@ export function HeroWatch3D() {
       const dt = Math.min(clock.getDelta(), 0.1);
       const elapsed = clock.getElapsedTime();
 
-      // Real-time mechanical watch hands
-      const now = new Date();
-      const secs = now.getSeconds() + now.getMilliseconds() / 1000;
-      const mins = now.getMinutes() + secs / 60;
-      const hrs = (now.getHours() % 12) + mins / 60;
+      const model = activeModelRef.current;
+      const finish = SHOWCASE_FINISHES[activeFinishRef.current] || SHOWCASE_FINISHES[0];
+      const choreo = SHOWCASE_CHOREOGRAPHIES[activeChoreoRef.current] || SHOWCASE_CHOREOGRAPHIES[0];
 
-      secPivot.rotation.z = -(secs / 60) * Math.PI * 2;
-      minPivot.rotation.z = -(mins / 60) * Math.PI * 2;
-      hourPivot.rotation.z = -(hrs / 12) * Math.PI * 2;
+      // Ensure currently selected bespoke 3D model is built
+      ensureModelBuilt(model.id);
 
-      // Idle 3D levitation + smooth showcase sweep
-      watchRoot.position.y = Math.sin(elapsed * 1.5) * 0.08;
-      orbitRing.rotation.z = elapsed * 0.25;
-
-      const idleYaw = Math.sin(elapsed * 0.7) * 0.35;
-      const idlePitch = Math.cos(elapsed * 0.55) * 0.12 + 0.12;
-
-      if (!isDragging) {
-        dragOffsetX = THREE.MathUtils.damp(dragOffsetX, 0, 2.5, dt);
-        dragOffsetY = THREE.MathUtils.damp(dragOffsetY, 0, 2.0, dt);
+      // 1. Smooth PBR finish + per-model accent / RGB cycle blending
+      const lerpAlpha = 1 - Math.exp(-4.8 * dt);
+      _colorPrimary.setHex(finish.primaryHex);
+      _colorSecondary.setHex(finish.secondaryHex);
+      if (model.rgbCycle) {
+        _colorAccent.setHSL((elapsed * 0.24) % 1, 0.92, 0.58);
+        _colorRim.copy(_colorAccent);
+      } else {
+        _colorAccent.setHex(model.tintHex ?? finish.accentHex);
+        _colorRim.setHex(finish.rimHex);
       }
 
-      const desiredX = idlePitch + targetRotX * 0.4 + dragOffsetX;
-      const desiredY = idleYaw + targetRotY * 0.55 + dragOffsetY;
+      sharedMats.primaryMetal.color.lerp(_colorPrimary, lerpAlpha);
+      sharedMats.primaryMetal.metalness = THREE.MathUtils.damp(
+        sharedMats.primaryMetal.metalness,
+        finish.metalness,
+        5,
+        dt
+      );
+      sharedMats.primaryMetal.roughness = THREE.MathUtils.damp(
+        sharedMats.primaryMetal.roughness,
+        finish.roughness,
+        5,
+        dt
+      );
+      sharedMats.secondaryBody.color.lerp(_colorSecondary, lerpAlpha);
+      sharedMats.accentGlow.color.lerp(_colorAccent, lerpAlpha);
+      sharedMats.accentGlow.emissive.lerp(_colorAccent, lerpAlpha);
+      particleMat.color.lerp(_colorAccent, lerpAlpha);
+      rimLight.color.lerp(_colorRim, lerpAlpha);
 
-      watchGroup.rotation.x = THREE.MathUtils.damp(watchGroup.rotation.x, desiredX, 6, dt);
-      watchGroup.rotation.y = THREE.MathUtils.damp(watchGroup.rotation.y, desiredY, 6, dt);
+      rimLight.position.x = Math.cos(elapsed * 0.55) * 4.5;
+      rimLight.position.z = Math.sin(elapsed * 0.55) * 3.8;
+
+      // 2. Smooth exploded-view factor
+      const breathingExplode =
+        choreo.explodeTarget > 0.5
+          ? 0.56 + Math.sin(elapsed * 1.45) * 0.36
+          : choreo.explodeTarget;
+      currentExplode = THREE.MathUtils.damp(currentExplode, breathingExplode, 4.2, dt);
+
+      // 3. Smooth morph transitions across cached bespoke 3D models
+      builtCache.forEach((built, id) => {
+        const isTarget = id === model.id;
+        const curScale = modelScales.get(id) ?? 0.001;
+        const nextScale = THREE.MathUtils.damp(curScale, isTarget ? 0.95 : 0.001, 7.6, dt);
+        modelScales.set(id, nextScale);
+        const visible = nextScale > 0.02;
+        built.root.visible = visible;
+        if (visible) {
+          built.root.scale.setScalar(nextScale);
+          built.update(elapsed, dt, currentExplode);
+        }
+      });
+
+      // 4. Levitation + triple gyroscope rings + 110 orbital particles
+      const floatY = Math.sin(elapsed * 1.55) * 0.08;
+      stageRoot.position.y = floatY;
+      contactShadow.scale.setScalar(1 - floatY * 0.85);
+
+      ringOuter.rotation.z = elapsed * choreo.orbitSpeed;
+      ringMid.rotation.z = -elapsed * (choreo.orbitSpeed * 1.35);
+      ringAccentArc.rotation.z = elapsed * (choreo.orbitSpeed * 1.7);
+
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const ang = pAngles[i] + elapsed * pSpeeds[i] * (0.7 + choreo.orbitSpeed);
+        const rad = pRadii[i] * (0.94 + Math.sin(elapsed * 0.9 + i) * 0.08);
+        _particleDummy.position.set(
+          Math.cos(ang) * rad,
+          pHeights[i] + Math.sin(elapsed * 1.2 + i * 0.7) * 0.14,
+          Math.sin(ang) * rad * 0.72
+        );
+        _particleDummy.rotation.set(elapsed + i, elapsed * 0.7, 0);
+        const s = pScales[i] * choreo.particleScale * (0.75 + Math.sin(elapsed * 2.4 + i) * 0.25);
+        _particleDummy.scale.setScalar(s);
+        _particleDummy.updateMatrix();
+        particles.setMatrixAt(i, _particleDummy.matrix);
+      }
+      particles.instanceMatrix.needsUpdate = true;
+
+      // 5. Kinetic choreography + interactive 360° drag damping
+      let idleYaw = Math.sin(elapsed * 0.65) * 0.44;
+      let idlePitch = Math.cos(elapsed * 0.5) * 0.11 + 0.1;
+      if (choreo.yawMode === 'spin') {
+        idleYaw = elapsed * 0.64;
+        idlePitch = 0.15 + Math.sin(elapsed * 0.9) * 0.08;
+      } else if (choreo.yawMode === 'hero') {
+        idleYaw = Math.sin(elapsed * 0.55) * 0.68;
+        idlePitch = 0.18 + Math.cos(elapsed * 0.6) * 0.1;
+      } else if (choreo.yawMode === 'pulse') {
+        idleYaw = Math.sin(elapsed * 0.95) * 0.55;
+        idlePitch = 0.12 + Math.sin(elapsed * 1.9) * 0.09;
+      } else if (choreo.yawMode === 'cinematic') {
+        idleYaw = elapsed * 0.36 + Math.sin(elapsed * 0.7) * 0.3;
+        idlePitch = 0.2 + Math.cos(elapsed * 0.45) * 0.13;
+      }
+
+      if (!isDragging) {
+        dragOffsetX = THREE.MathUtils.damp(dragOffsetX, 0, 2.4, dt);
+        dragOffsetY = THREE.MathUtils.damp(dragOffsetY, 0, 1.8, dt);
+      }
+
+      modelPivot.rotation.x = THREE.MathUtils.damp(
+        modelPivot.rotation.x,
+        idlePitch + targetRotX * 0.42 + dragOffsetX,
+        6,
+        dt
+      );
+      modelPivot.rotation.y = THREE.MathUtils.damp(
+        modelPivot.rotation.y,
+        idleYaw + targetRotY * 0.55 + dragOffsetY,
+        6,
+        dt
+      );
 
       renderer.render(scene, camera);
 
@@ -532,24 +606,159 @@ export function HeroWatch3D() {
     };
   }, []);
 
+  const handleCategoryChange = (group: ShowcaseCategoryGroup) => {
+    setCategoryGroup(group);
+    setModelIdx(0);
+  };
+
+  const handlePrevModel = () => {
+    setModelIdx((i) => (i - 1 + filteredModels.length) % filteredModels.length);
+  };
+
+  const handleNextModel = () => {
+    setModelIdx((i) => (i + 1) % filteredModels.length);
+  };
+
+  const handleShuffle = () => {
+    if (filteredModels.length <= 1) return;
+    let next = Math.floor(Math.random() * filteredModels.length);
+    if (next === safeIdx) next = (safeIdx + 1) % filteredModels.length;
+    setModelIdx(next);
+    setFinishIdx((f) => (f + 1) % SHOWCASE_FINISHES.length);
+  };
+
   if (webglFailed) {
     return (
       <div
-        className="relative w-full h-full min-h-[150px] sm:min-h-[210px] flex items-center justify-center select-none"
-        aria-label="New Chiko Watch emblem"
+        className="relative w-full h-full min-h-[240px] flex items-center justify-center select-none"
+        aria-label="New Chiko Watch 3D Showcase"
       >
-        <div className="w-24 h-24 rounded-full border border-zinc-700 bg-zinc-900/90 flex items-center justify-center shadow-lg">
-          <Watch size={40} className="text-zinc-200" strokeWidth={1.35} />
+        <div className="w-24 h-24 rounded-full border border-stone-300 bg-white/85 flex items-center justify-center shadow-sm">
+          <Watch size={40} className="text-zinc-800" strokeWidth={1.35} />
         </div>
       </div>
     );
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="relative w-full h-full min-h-[150px] sm:min-h-[210px] cursor-grab active:cursor-grabbing select-none"
-      aria-label="Interactive 3D New Chiko Watch showcase"
-    />
+    <div className="w-full h-full flex flex-col select-none">
+      {/* 100% UNOBSTRUCTED 3D STAGE — Zero Buttons or Controls Overlaying the Model */}
+      <div className="relative flex-1 w-full min-h-[240px] sm:min-h-[290px]">
+        <div
+          ref={containerRef}
+          className="absolute inset-0 cursor-grab active:cursor-grabbing"
+          aria-label={`Interactive 3D ${currentModel.name} — ${SHOWCASE_MODELS.length} unique electronics models`}
+        />
+      </div>
+
+      {/* DEDICATED COMPACT CONTROL STRIP COMPLETELY BELOW THE 3D MODEL */}
+      <div className="relative z-10 border-t border-stone-200/90 bg-[#FAF8F4] px-2.5 sm:px-3 py-2 space-y-1.5">
+        {/* Row 1: Model Info + Prev/Next/Shuffle/Motion/Play */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[9.5px] font-semibold uppercase tracking-[0.12em] text-stone-500 truncate">
+              {currentModel.category} · {safeIdx + 1}/{filteredModels.length}
+              {categoryGroup === 'All' ? ' Unique 3D' : ''}
+            </p>
+            <p className="text-xs font-semibold text-[#09090B] truncate leading-tight">
+              {currentModel.name}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={handlePrevModel}
+              className="h-7 w-7 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-zinc-800 flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Previous 3D model"
+              title="Previous 3D model"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={handleNextModel}
+              className="h-7 w-7 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-zinc-800 flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Next 3D model"
+              title="Next 3D model"
+            >
+              <ChevronRight size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={handleShuffle}
+              className="h-7 w-7 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-zinc-800 flex items-center justify-center transition-colors cursor-pointer"
+              aria-label="Random 3D model"
+              title="Random 3D product"
+            >
+              <Shuffle size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setChoreoIdx((c) => (c + 1) % SHOWCASE_CHOREOGRAPHIES.length)}
+              className="h-7 px-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-[10.5px] font-medium text-zinc-800 flex items-center gap-1 transition-colors cursor-pointer"
+              title={`3D Motion: ${currentChoreo.name}`}
+            >
+              {choreoIdx === 1 ? <Layers size={11} /> : <Sparkles size={11} />}
+              <span className="hidden sm:inline">{currentChoreo.name}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setAutoCycle((v) => !v)}
+              className="h-7 w-7 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-zinc-800 flex items-center justify-center transition-colors cursor-pointer"
+              aria-label={autoCycle ? 'Pause auto showcase' : 'Play auto showcase'}
+              title={autoCycle ? 'Pause auto-rotate' : 'Play auto-rotate'}
+            >
+              {autoCycle ? <Pause size={11} /> : <Play size={11} />}
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Category Quick-Switch + 6 Luxury Color Swatches */}
+        <div className="flex items-center justify-between gap-2 pt-0.5">
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+            {SHOWCASE_CATEGORY_GROUPS.map((grp) => {
+              const active = categoryGroup === grp;
+              return (
+                <button
+                  key={grp}
+                  type="button"
+                  onClick={() => handleCategoryChange(grp)}
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                    active
+                      ? 'bg-[#09090B] text-white'
+                      : 'bg-white border border-stone-200 text-stone-600 hover:text-[#09090B]'
+                  }`}
+                >
+                  {grp === 'All' ? `All (${SHOWCASE_MODELS.length})` : grp}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            className="flex items-center gap-1.5 shrink-0 pl-1.5 border-l border-stone-200"
+            role="group"
+            aria-label="Material finish colors"
+          >
+            {SHOWCASE_FINISHES.map((fin, idx) => (
+              <button
+                key={fin.id}
+                type="button"
+                onClick={() => setFinishIdx(idx)}
+                title={fin.name}
+                aria-label={`Color: ${fin.name}`}
+                className={`h-3.5 w-3.5 rounded-full border transition-transform cursor-pointer ${
+                  finishIdx === idx
+                    ? 'scale-120 border-[#09090B] ring-2 ring-zinc-900/20'
+                    : 'border-stone-300 hover:scale-110'
+                }`}
+                style={{ backgroundColor: fin.swatchCss }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

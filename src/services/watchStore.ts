@@ -824,39 +824,148 @@ export function compressImageFile(
   });
 }
 
+export interface CloudinaryUsageInfo {
+  plan: string;
+  creditsUsed: number;
+  creditsLimit: number;
+  usedPercent: number;
+  storageBytes: number;
+  storageMB: number;
+  maxStorageGB: number;
+  bandwidthMB: number;
+  resources: number;
+}
+
+export interface CloudinaryStatusInfo {
+  configured: boolean;
+  mode: 'signed' | 'unsigned' | 'unconfigured';
+  cloudName: string;
+  folder: string;
+  hasApiKey: boolean;
+  hasUploadPreset: boolean;
+  usage?: CloudinaryUsageInfo | null;
+}
+
+export async function fetchCloudinaryStatus(forceRefresh = false): Promise<CloudinaryStatusInfo> {
+  try {
+    const res = await fetch(
+      `/api/cloudinary/status${forceRefresh ? '?refresh=1' : ''}`,
+      { cache: 'no-store' }
+    );
+    if (res.ok) {
+      const json = await res.json();
+      return {
+        configured: Boolean(json.configured),
+        mode: json.mode === 'signed' || json.mode === 'unsigned' ? json.mode : 'unconfigured',
+        cloudName: String(json.cloudName || PUBLIC_CONFIG.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'zxamensn'),
+        folder: String(json.folder || 'new-chiko-watch'),
+        hasApiKey: Boolean(json.hasApiKey),
+        hasUploadPreset: Boolean(json.hasUploadPreset || isCloudinaryPresetConfigured),
+        usage: json.usage ?? null,
+      };
+    }
+  } catch {
+    // fall through
+  }
+  return {
+    configured: isCloudinaryPresetConfigured,
+    mode: isCloudinaryPresetConfigured ? 'unsigned' : 'unconfigured',
+    cloudName: PUBLIC_CONFIG.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'zxamensn',
+    folder: 'new-chiko-watch',
+    hasApiKey: false,
+    hasUploadPreset: isCloudinaryPresetConfigured,
+    usage: null,
+  };
+}
+
 /**
- * Uploads photo to Cloudinary when unsigned preset is configured;
- * otherwise stores compressed Data URL (< 420KB) so it saves cleanly in Supabase/server store.
+ * Uploads an already-encoded Data URL (e.g. from existing Supabase base64 rows)
+ * directly to Cloudinary CDN via server-side signed API or unsigned preset.
  */
-export async function uploadWatchPhoto(file: File): Promise<{
-  imageUrl: string;
-  base64: string;
-  mimeType: string;
-  provider: 'cloudinary' | 'local';
-}> {
-  const compressed = await compressImageFile(file);
+export async function uploadDataUrlToCloudinary(
+  imageDataUrl: string,
+  adminToken?: string
+): Promise<{ ok: true; imageUrl: string; mode: 'signed' | 'unsigned' } | { ok: false; error: string }> {
+  const token = adminToken || getStoredAdminToken();
+  if (token) {
+    try {
+      const res = await fetch('/api/cloudinary/upload', {
+        method: 'POST',
+        headers: buildAuthHeaders(token),
+        body: JSON.stringify({ imageDataUrl, folder: 'new-chiko-watch' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && typeof json.imageUrl === 'string' && json.imageUrl) {
+        return {
+          ok: true,
+          imageUrl: json.imageUrl,
+          mode: json.mode === 'signed' ? 'signed' : 'unsigned',
+        };
+      }
+      if (json.configured && json.error) {
+        return { ok: false, error: String(json.error) };
+      }
+    } catch {
+      // fall through to browser unsigned preset if configured
+    }
+  }
 
   if (isCloudinaryPresetConfigured) {
     try {
       const formData = new FormData();
-      formData.append('file', compressed.dataUrl);
+      formData.append('file', imageDataUrl);
       formData.append('upload_preset', PUBLIC_CONFIG.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET);
+      formData.append('folder', 'new-chiko-watch');
       const endpoint = `https://api.cloudinary.com/v1_1/${PUBLIC_CONFIG.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`;
       const res = await fetch(endpoint, { method: 'POST', body: formData });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.secure_url) {
-          return {
-            imageUrl: json.secure_url,
-            base64: compressed.base64,
-            mimeType: compressed.mimeType,
-            provider: 'cloudinary',
-          };
-        }
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.secure_url) {
+        const optimized = String(json.secure_url).replace(
+          '/image/upload/',
+          '/image/upload/f_auto,q_auto:good,w_900,c_limit/'
+        );
+        return { ok: true, imageUrl: optimized, mode: 'unsigned' };
       }
     } catch (err) {
-      console.warn('Cloudinary upload failed, falling back to compressed image:', err);
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : 'Cloudinary browser upload failed.',
+      };
     }
+  }
+
+  return {
+    ok: false,
+    error: 'Cloudinary credentials not set yet in Settings > Secrets.',
+  };
+}
+
+/**
+ * Uploads photo to Cloudinary (25GB free CDN) via server-side signed API or unsigned preset;
+ * falls back to lightweight compressed Data URL (< 420KB) only if Cloudinary Secrets are not yet added.
+ */
+export async function uploadWatchPhoto(
+  file: File,
+  adminToken?: string
+): Promise<{
+  imageUrl: string;
+  base64: string;
+  mimeType: string;
+  provider: 'cloudinary' | 'local';
+  mode?: 'signed' | 'unsigned';
+}> {
+  // Higher crisp resolution (1100px) when heading to Cloudinary CDN; still fast & <420KB for Gemini AI Auto-Fill
+  const compressed = await compressImageFile(file, 960);
+
+  const cloudResult = await uploadDataUrlToCloudinary(compressed.dataUrl, adminToken);
+  if (cloudResult.ok) {
+    return {
+      imageUrl: cloudResult.imageUrl,
+      base64: compressed.base64,
+      mimeType: compressed.mimeType,
+      provider: 'cloudinary',
+      mode: cloudResult.mode,
+    };
   }
 
   return {

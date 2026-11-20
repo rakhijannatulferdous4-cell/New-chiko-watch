@@ -19,6 +19,50 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
   const uploadRef = useRef<HTMLInputElement | null>(null);
   const cameraRef = useRef<HTMLInputElement | null>(null);
 
+  const detectDominantColor = (dataUrl: string): Promise<string> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = 24;
+          c.height = 24;
+          const ctx = c.getContext('2d');
+          if (!ctx) return resolve('Black');
+          ctx.drawImage(img, 0, 0, 24, 24);
+          const { data } = ctx.getImageData(4, 4, 16, 16);
+          let r = 0;
+          let g = 0;
+          let b = 0;
+          const count = data.length / 4;
+          for (let i = 0; i < data.length; i += 4) {
+            r += data[i];
+            g += data[i + 1];
+            b += data[i + 2];
+          }
+          r /= count;
+          g /= count;
+          b /= count;
+          const max = Math.max(r, g, b);
+          const min = Math.min(r, g, b);
+          const sat = max === 0 ? 0 : (max - min) / max;
+          if (sat < 0.16) {
+            if (max < 68) return resolve('Black');
+            if (max > 195) return resolve('White');
+            return resolve('Silver');
+          }
+          if (r > g && r > b) return resolve(g > 135 ? 'Gold' : 'Red');
+          if (b > r && b > g) return resolve('Blue');
+          if (g > r && g > b) return resolve('Green');
+          return resolve('Black');
+        } catch {
+          resolve('Black');
+        }
+      };
+      img.onerror = () => resolve('Black');
+      img.src = dataUrl;
+    });
+
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -26,33 +70,24 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
     setError('');
     setResult(null);
     setLoading(true);
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 28000);
     try {
       const { dataUrl, base64, mimeType } = await compressImageFile(file);
       setPreviewUrl(dataUrl);
+      const dominantColor = await detectDominantColor(dataUrl);
 
-      let attachedDataImages = 0;
-      const compactWatches = watches.map((w) => {
-        const img = w.image_url || '';
-        const isDataImg = img.startsWith('data:image/');
-        let keepImage = '';
-        if (img.startsWith('http')) {
-          keepImage = img;
-        } else if (isDataImg && attachedDataImages < 6) {
-          keepImage = img;
-          attachedDataImages += 1;
-        }
-        return {
-          ...w,
-          image_url: keepImage,
-        };
-      });
+      // Send lightweight catalog metadata (no heavy base64 inventory images) for ultra-fast ~2s visual search
+      const compactWatches = watches.map(({ image_url: _img, ...rest }) => rest);
 
       const res = await fetch('/api/gemini/visual-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           imageBase64: base64,
           mimeType,
+          dominantColor,
           watches: compactWatches,
         }),
       });
@@ -81,13 +116,17 @@ export function ChikoLensView({ watches, onSelectWatch }: ChikoLensViewProps) {
 
       setResult(data);
     } catch (err) {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
       const rawMsg = err instanceof Error ? err.message : '';
       setError(
-        rawMsg && !rawMsg.trim().startsWith('{')
-          ? rawMsg
-          : 'Visual search could not complete. Please try again with a clear product photo.'
+        isAbort
+          ? 'Chiko Lens took longer than usual. Please tap Upload or Camera again to retry.'
+          : rawMsg && !rawMsg.trim().startsWith('{')
+            ? rawMsg
+            : 'Visual search could not complete. Please try again with a clear product photo.'
       );
     } finally {
+      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   };

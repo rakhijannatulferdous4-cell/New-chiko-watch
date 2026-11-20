@@ -5,7 +5,7 @@ import express, { type Request, type Response } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { GoogleGenAI, Type, type Part } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type, type Part } from '@google/genai';
 import { getServerConfig } from './src/config/keys.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -265,7 +265,7 @@ function isMissingColumnError(msg: string | undefined): boolean {
   );
 }
 
-function createGeminiClient(): GoogleGenAI {
+function createGeminiClient(timeoutMs = 18000): GoogleGenAI {
   const { GEMINI_API_KEY } = getServerConfig();
   if (!GEMINI_API_KEY || GEMINI_API_KEY === 'MY_GEMINI_API_KEY') {
     throw new Error(
@@ -274,8 +274,8 @@ function createGeminiClient(): GoogleGenAI {
   }
   return new GoogleGenAI({
     apiKey: GEMINI_API_KEY,
-    apiVersion: 'v1beta',
     httpOptions: {
+      timeout: timeoutMs,
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -319,6 +319,88 @@ function formatFriendlyAiError(error: unknown, fallback: string): string {
   }
 
   return fallback;
+}
+
+function extractHttpStatus(err: unknown): number {
+  const status = Number((err as { status?: unknown })?.status);
+  if (Number.isInteger(status) && status >= 400 && status < 600) return status;
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  if (msg.includes('AI_TIMEOUT')) return 504;
+  if (msg.includes('"code":429') || msg.includes('RESOURCE_EXHAUSTED')) return 429;
+  if (msg.includes('"code":403') || msg.includes('PERMISSION_DENIED')) return 403;
+  if (msg.includes('"code":400') || msg.includes('API_KEY_INVALID')) return 400;
+  return 500;
+}
+
+function withHardTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`AI_TIMEOUT_${ms}MS`)), ms);
+    promise.then(
+      (val) => {
+        clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+async function generateWithFallbackModel(
+  ai: GoogleGenAI,
+  params: Omit<Parameters<GoogleGenAI['models']['generateContent']>[0], 'model'>,
+  timeoutMs = 9500
+) {
+  // Prioritize gemini-3.1-flash-lite (native ThinkingLevel.MINIMAL, ~1-2s latency),
+  // fall back to gemini-4-hydrogen (ThinkingLevel.LOW), then one fast retry on flash-lite.
+  const attempts: Array<{ model: string; timeout: number }> = [
+    { model: 'gemini-3.1-flash-lite', timeout: timeoutMs },
+    { model: 'gemini-4-hydrogen', timeout: Math.max(10500, timeoutMs) },
+    { model: 'gemini-3.1-flash-lite', timeout: 7500 },
+  ];
+  let lastError: unknown;
+  for (let i = 0; i < attempts.length; i++) {
+    const { model, timeout: perModelTimeout } = attempts[i];
+    if (i > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    const { thinkingConfig: existingThinking, ...baseConfig } = params.config ?? {};
+    const mergedConfig =
+      model === 'gemini-3.1-flash-lite'
+        ? {
+            ...baseConfig,
+            thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
+          }
+        : {
+            ...baseConfig,
+            // gemini-4-hydrogen supports LOW/MEDIUM/HIGH/XHIGH (MINIMAL returns 400)
+            thinkingConfig:
+              existingThinking && existingThinking.thinkingLevel !== ThinkingLevel.MINIMAL
+                ? existingThinking
+                : { thinkingLevel: ThinkingLevel.LOW },
+          };
+    try {
+      return await withHardTimeout(
+        ai.models.generateContent({
+          model,
+          ...params,
+          config: mergedConfig,
+        }),
+        perModelTimeout
+      );
+    } catch (err) {
+      lastError = err;
+      const code = extractHttpStatus(err);
+      const msg = err instanceof Error ? err.message : String(err ?? '');
+      console.warn(`[Gemini] Attempt ${i + 1} (${model}) failed (status=${code}): ${msg.slice(0, 180)}`);
+      if (code !== 400 && code !== 429 && code !== 404 && code !== 503 && code !== 504) {
+        throw err;
+      }
+    }
+  }
+  throw lastError;
 }
 
 interface CatalogItemSummary {
@@ -438,6 +520,185 @@ async function startServer() {
       return res.status(401).json({ ok: false });
     }
     return res.json({ ok: true, username: admin.username });
+  });
+
+  // Cloudinary 25GB Cloud Media Status & Server-Side Signed/Unsigned Upload
+  const optimizeCloudinaryUrl = (secureUrl: string): string => {
+    if (!secureUrl || !secureUrl.includes('/image/upload/')) return secureUrl;
+    if (secureUrl.includes('/image/upload/f_auto')) return secureUrl;
+    return secureUrl.replace('/image/upload/', '/image/upload/f_auto,q_auto:good,w_900,c_limit/');
+  };
+
+  let cachedCloudUsage: { fetchedAt: number; data: Record<string, unknown> | null } = {
+    fetchedAt: 0,
+    data: null,
+  };
+
+  app.get('/api/cloudinary/status', async (req: Request, res: Response) => {
+    const cfg = getServerConfig();
+    const hasSigned = Boolean(
+      cfg.CLOUDINARY_CLOUD_NAME && cfg.CLOUDINARY_API_KEY && cfg.CLOUDINARY_API_SECRET
+    );
+    const hasUnsigned = Boolean(cfg.CLOUDINARY_CLOUD_NAME && cfg.CLOUDINARY_UPLOAD_PRESET);
+    const mode = hasSigned ? 'signed' : hasUnsigned ? 'unsigned' : 'unconfigured';
+
+    let usage: Record<string, unknown> | null = null;
+    if (hasSigned) {
+      const forceRefresh = req.query.refresh === '1';
+      if (!forceRefresh && cachedCloudUsage.data && Date.now() - cachedCloudUsage.fetchedAt < 60_000) {
+        usage = cachedCloudUsage.data;
+      } else {
+        try {
+          const auth = Buffer.from(`${cfg.CLOUDINARY_API_KEY}:${cfg.CLOUDINARY_API_SECRET}`).toString('base64');
+          const usageRes = await fetch(
+            `https://api.cloudinary.com/v1_1/${encodeURIComponent(cfg.CLOUDINARY_CLOUD_NAME)}/usage`,
+            { headers: { Authorization: `Basic ${auth}` } }
+          );
+          if (usageRes.ok) {
+            const raw = (await usageRes.json()) as {
+              plan?: string;
+              credits?: { usage?: number; limit?: number; used_percent?: number };
+              storage?: { usage?: number; credits_usage?: number };
+              bandwidth?: { usage?: number; credits_usage?: number };
+              resources?: number;
+              objects?: { usage?: number };
+            };
+            const storageBytes = Number(raw.storage?.usage) || 0;
+            const bandwidthBytes = Number(raw.bandwidth?.usage) || 0;
+            const creditsLimit = Number(raw.credits?.limit) || 25;
+            const creditsUsed = Number(raw.credits?.usage) || 0;
+            usage = {
+              plan: raw.plan || 'Free',
+              creditsUsed: Math.round(creditsUsed * 1000) / 1000,
+              creditsLimit,
+              usedPercent: Number(raw.credits?.used_percent) || 0,
+              storageBytes,
+              storageMB: Math.round((storageBytes / (1024 * 1024)) * 100) / 100,
+              maxStorageGB: creditsLimit, // 1 credit = 1 GB managed storage on Cloudinary Free/Plus
+              bandwidthMB: Math.round((bandwidthBytes / (1024 * 1024)) * 100) / 100,
+              resources: Number(raw.resources ?? raw.objects?.usage ?? 0),
+            };
+            cachedCloudUsage = { fetchedAt: Date.now(), data: usage };
+          }
+        } catch {
+          usage = cachedCloudUsage.data;
+        }
+      }
+    }
+
+    return res.json({
+      ok: true,
+      configured: hasSigned || hasUnsigned,
+      mode,
+      cloudName: cfg.CLOUDINARY_CLOUD_NAME || 'zxamensn',
+      folder: 'new-chiko-watch',
+      hasApiKey: Boolean(cfg.CLOUDINARY_API_KEY),
+      hasUploadPreset: Boolean(cfg.CLOUDINARY_UPLOAD_PRESET),
+      usage,
+    });
+  });
+
+  app.post('/api/cloudinary/upload', async (req: Request, res: Response) => {
+    const admin = verifyAdminToken(req);
+    if (!admin) {
+      return res.status(401).json({ ok: false, error: 'Admin login required to upload media.' });
+    }
+
+    const { imageDataUrl, folder } = (req.body ?? {}) as {
+      imageDataUrl?: string;
+      folder?: string;
+    };
+    if (
+      typeof imageDataUrl !== 'string' ||
+      (!imageDataUrl.startsWith('data:image/') && !/^https?:\/\//i.test(imageDataUrl))
+    ) {
+      return res.status(400).json({ ok: false, error: 'Valid image data URL is required.' });
+    }
+
+    const cfg = getServerConfig();
+    const cloudName = cfg.CLOUDINARY_CLOUD_NAME;
+    const targetFolder =
+      typeof folder === 'string' && /^[a-zA-Z0-9_/-]{1,64}$/.test(folder.trim())
+        ? folder.trim()
+        : 'new-chiko-watch';
+    const hasSigned = Boolean(cloudName && cfg.CLOUDINARY_API_KEY && cfg.CLOUDINARY_API_SECRET);
+    const hasUnsigned = Boolean(cloudName && cfg.CLOUDINARY_UPLOAD_PRESET);
+
+    if (!hasSigned && !hasUnsigned) {
+      return res.status(503).json({
+        ok: false,
+        configured: false,
+        error:
+          'Cloudinary credentials not configured yet. Add CLOUDINARY_URL (or CLOUDINARY_API_KEY + CLOUDINARY_API_SECRET or CLOUDINARY_UPLOAD_PRESET) in Settings > Secrets.',
+      });
+    }
+
+    try {
+      const endpoint = `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/image/upload`;
+      const bodyParams = new URLSearchParams();
+      bodyParams.append('file', imageDataUrl);
+
+      if (hasSigned) {
+        const timestamp = Math.floor(Date.now() / 1000);
+        const paramsToSign = `folder=${targetFolder}&timestamp=${timestamp}`;
+        const signature = crypto
+          .createHash('sha1')
+          .update(`${paramsToSign}${cfg.CLOUDINARY_API_SECRET}`)
+          .digest('hex');
+        bodyParams.append('api_key', cfg.CLOUDINARY_API_KEY);
+        bodyParams.append('timestamp', String(timestamp));
+        bodyParams.append('folder', targetFolder);
+        bodyParams.append('signature', signature);
+      } else {
+        bodyParams.append('upload_preset', cfg.CLOUDINARY_UPLOAD_PRESET);
+        bodyParams.append('folder', targetFolder);
+      }
+
+      const uploadRes = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: bodyParams.toString(),
+      });
+      const json = (await uploadRes.json().catch(() => ({}))) as {
+        secure_url?: string;
+        public_id?: string;
+        bytes?: number;
+        width?: number;
+        height?: number;
+        format?: string;
+        error?: { message?: string };
+      };
+
+      if (!uploadRes.ok || !json.secure_url) {
+        const rawErr = json.error?.message || '';
+        const friendlyErr = /whitelisted for unsigned/i.test(rawErr)
+          ? 'Your Cloudinary preset is currently in Signed mode. Either add CLOUDINARY_URL in Settings → Secrets for automatic Signed uploads (recommended), OR open Cloudinary Dashboard → Settings → Upload → Upload Presets and switch that preset to "Unsigned".'
+          : rawErr || 'Cloudinary rejected the upload. Check your Cloudinary Secrets.';
+        return res.status(uploadRes.status >= 400 ? uploadRes.status : 502).json({
+          ok: false,
+          configured: true,
+          error: friendlyErr,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        provider: 'cloudinary',
+        mode: hasSigned ? 'signed' : 'unsigned',
+        imageUrl: optimizeCloudinaryUrl(json.secure_url),
+        rawUrl: json.secure_url,
+        publicId: json.public_id || '',
+        bytes: json.bytes || 0,
+        format: json.format || 'jpg',
+      });
+    } catch (err) {
+      console.error('Cloudinary server upload error:', err);
+      return res.status(502).json({
+        ok: false,
+        configured: true,
+        error: 'Could not reach Cloudinary right now. Please try again.',
+      });
+    }
   });
 
   // Shared Public Products Store (Supabase primary, server store fallback)
@@ -878,33 +1139,17 @@ async function startServer() {
         },
       ];
 
-      if (catalogSummary.length > 0) {
-        let attachedImages = 0;
-        for (const rawItem of watches as Array<Record<string, unknown>>) {
-          if (attachedImages >= 6) break;
-          const imgStr = typeof rawItem.image_url === 'string' ? rawItem.image_url : '';
-          const parsedData = parseDataUrl(imgStr);
-          if (parsedData) {
-            parts.push({
-              text: `INVENTORY REFERENCE PHOTO for id="${String(rawItem.id)}" (${String(rawItem.brand)} ${String(rawItem.model)}):`,
-            });
-            parts.push({
-              inlineData: {
-                mimeType: parsedData.mimeType,
-                data: parsedData.data,
-              },
-            });
-            attachedImages += 1;
-          }
-        }
+      const dominantColor =
+        typeof req.body?.dominantColor === 'string' && req.body.dominantColor.trim()
+          ? req.body.dominantColor.trim()
+          : 'Black';
 
+      if (catalogSummary.length > 0) {
         parts.push({
-          text: `You are the visual and semantic product matcher for "New Chiko Watch & Electronics" (selling Analog Watches, Digital Watches, Smartwatches, TWS Earbuds, Power Banks, Chargers & Cables, Bluetooth Speakers, Neckbands, and Gadgets & Accessories).
-1. Identify the product in the CUSTOMER QUERY PHOTO (likely brand, category, color, and key features).
-2. Visually compare the CUSTOMER QUERY PHOTO against any INVENTORY REFERENCE PHOTOS above AND semantically compare against EVERY item in the Full Store Inventory JSON below.
-3. Match items even if lighting, angle, or model naming differs slightly.
-4. ALWAYS return up to 5 closest matching products from our inventory ranked from highest to lowest matchPercentage (1 to 100), using the EXACT "id" string from the JSON as "watchId".
-5. NEVER return an empty matches array or say "not found" when the inventory has items.
+          text: `You are the visual and semantic product matcher for "New Chiko Watch & Electronics".
+1. Inspect the CUSTOMER QUERY PHOTO carefully (visible brand text, model code, category, color, material, and key features).
+2. Match semantically and visually against EVERY item in the Full Store Inventory JSON below.
+3. Return up to 5 closest matching products from our inventory ranked from highest to lowest matchPercentage (1 to 100), using the EXACT "id" string as "watchId".
 
 Full Store Inventory JSON:
 ${JSON.stringify(catalogSummary)}`,
@@ -915,47 +1160,50 @@ ${JSON.stringify(catalogSummary)}`,
         });
       }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts },
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              detectedProduct: {
-                type: Type.OBJECT,
-                properties: {
-                  brand: { type: Type.STRING },
-                  category: { type: Type.STRING },
-                  color: { type: Type.STRING },
-                  features: { type: Type.STRING },
-                },
-                required: ['brand', 'category', 'color', 'features'],
-              },
-              matches: {
-                type: Type.ARRAY,
-                items: {
+      const response = await generateWithFallbackModel(
+        ai,
+        {
+          contents: { parts },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                detectedProduct: {
                   type: Type.OBJECT,
                   properties: {
-                    watchId: { type: Type.STRING },
-                    matchPercentage: { type: Type.INTEGER },
-                    reason: { type: Type.STRING },
+                    brand: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                    color: { type: Type.STRING },
+                    features: { type: Type.STRING },
                   },
-                  required: ['watchId', 'matchPercentage', 'reason'],
+                  required: ['brand', 'category', 'color', 'features'],
+                },
+                matches: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      watchId: { type: Type.STRING },
+                      matchPercentage: { type: Type.INTEGER },
+                      reason: { type: Type.STRING },
+                    },
+                    required: ['watchId', 'matchPercentage', 'reason'],
+                  },
                 },
               },
+              required: ['detectedProduct', 'matches'],
             },
-            required: ['detectedProduct', 'matches'],
           },
         },
-      });
+        10000
+      );
 
       const parsed = JSON.parse((response.text ?? '{}').trim());
       const detectedProduct = parsed.detectedProduct ?? {
         brand: 'Watch / Electronics',
         category: 'Gadgets & Accessories',
-        color: 'Black',
+        color: dominantColor,
         features: 'Consumer watch or electronics item',
       };
 
@@ -980,7 +1228,6 @@ ${JSON.stringify(catalogSummary)}`,
         (a, b) => b.matchPercentage - a.matchPercentage
       );
 
-      // Guarantee closest-match results whenever inventory has items
       if (catalogSummary.length > 0 && finalMatches.length === 0) {
         finalMatches = computeSemanticFallbackMatches(detectedProduct, catalogSummary);
       }
@@ -990,8 +1237,9 @@ ${JSON.stringify(catalogSummary)}`,
         matches: finalMatches,
       });
     } catch (error) {
-      console.error('Chiko Lens error:', error);
-      return res.status(500).json({
+      const status = extractHttpStatus(error);
+      console.error('Chiko Lens error:', status, error instanceof Error ? error.message.slice(0, 200) : error);
+      return res.status(status).json({
         error: formatFriendlyAiError(
           error,
           'Chiko Lens could not analyze this image right now. Please try another photo.'
@@ -1029,8 +1277,7 @@ ${JSON.stringify(catalogSummary)}`,
 
       const ai = createGeminiClient();
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+      const response = await generateWithFallbackModel(ai, {
         contents: {
           parts: [
             {
@@ -1084,8 +1331,13 @@ Carefully inspect visible markings, dial/screen, strap or casing material, ports
       const parsed = JSON.parse((response.text ?? '{}').trim());
       return res.json(parsed);
     } catch (error) {
-      console.error('AI Auto-Fill error:', error);
-      return res.status(500).json({
+      const status = extractHttpStatus(error);
+      if (status === 429) {
+        console.warn('AI Auto-Fill rate limit reached (429).');
+      } else {
+        console.error('AI Auto-Fill error:', error);
+      }
+      return res.status(status).json({
         error: formatFriendlyAiError(
           error,
           'Could not auto-fill product details from this image. You can fill in the fields manually.'
@@ -1094,7 +1346,7 @@ Carefully inspect visible markings, dial/screen, strap or casing material, ports
     }
   });
 
-  // Smart Shop Chatbot (Bangla, Banglish, English — Watches & Electronics, v1beta)
+  // Smart Shop Chatbot (Bangla, Banglish, English — Watches & Electronics, low-latency Gemini)
   app.post('/api/gemini/chat', async (req: Request, res: Response) => {
     try {
       const { message, history, watches } = req.body ?? {};
@@ -1102,69 +1354,895 @@ Carefully inspect visible markings, dial/screen, strap or casing material, ports
         return res.status(400).json({ error: 'Please type a message to ask the concierge.' });
       }
 
-      const ai = createGeminiClient();
+      const ai = createGeminiClient(11000);
 
       // Strictly exclude real_buying_price from customer-facing AI context
-      const publicCatalog = watches.map((w: Record<string, unknown>) => ({
-        id: w.id,
-        brand: w.brand,
-        model: w.model,
-        color: w.color,
-        category: w.category ?? w.strap_type,
-        connectivity: w.connectivity ?? w.movement,
-        capacity_spec: w.capacity_spec ?? w.case_size,
-        tag_price_bdt: w.display_buying_price,
-        offer_price_bdt: w.min_selling_price,
-        stock_count: w.stock_count,
-        description: w.description,
+      const publicCatalog = watches.slice(0, 40).map((w: Record<string, unknown>) => ({
+        id: String(w.id ?? ''),
+        product_name: String(w.product_name ?? ''),
+        brand: String(w.brand ?? ''),
+        model: String(w.model ?? ''),
+        color: String(w.color ?? ''),
+        category: String(w.category ?? w.strap_type ?? ''),
+        connectivity: String(w.connectivity ?? w.movement ?? ''),
+        capacity_spec: String(w.capacity_spec ?? w.case_size ?? ''),
+        tag_price_bdt: Number(w.display_buying_price) || 0,
+        offer_price_bdt: Number(w.min_selling_price) || 0,
+        stock_count: Number(w.stock_count) || 0,
+        description: String(w.description ?? '').slice(0, 140),
       }));
 
       const conversationContext = Array.isArray(history)
         ? history
-            .slice(-6)
-            .map((h: { role: string; text: string }) => `${h.role}: ${h.text}`)
+            .slice(-4)
+            .map((h: { role: string; text: string }) => `${h.role}: ${String(h.text ?? '').slice(0, 180)}`)
             .join('\n')
         : '';
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `${conversationContext ? `Recent conversation:\n${conversationContext}\n\n` : ''}Customer message: ${message}`,
-        config: {
-          systemInstruction: `You are the polite, knowledgeable sales concierge at "New Chiko Watch & Electronics", selling both traditional/digital watches AND electronics (Smartwatches, TWS Earbuds, Power Banks, Chargers, Cables, Bluetooth Speakers, Neckbands, and Gadgets).
-- Fluently understand and reply in the same language/style the customer uses: Bangla (বাংলা), Banglish (Romanized Bengali like "Casio er 2000 takar niche ki ghori ache?" or "2000 takar moddhe TWS earbuds ache?"), or English.
-- Only recommend products from the provided Store Catalog JSON below. Use offer_price_bdt (৳) as the selling price and mention tag_price_bdt if helpful.
-- If the Store Catalog JSON is empty ([]), politely let the customer know that new watches and electronics items are being added shortly and invite them to check back soon.
-- NEVER invent products not in the catalog, and NEVER mention wholesale/buying cost.
-- If matching products exist, include their exact "id" values in recommendedWatchIds (up to 4). If none match the exact budget/brand, gently say so and suggest the closest available alternatives if appropriate.
-- Keep replies concise, warm, and clear for mobile shoppers.
+      const response = await generateWithFallbackModel(
+        ai,
+        {
+          contents: `${conversationContext ? `Recent conversation:\n${conversationContext}\n\n` : ''}Customer message: ${String(message).slice(0, 400)}`,
+          config: {
+            systemInstruction: `You are the polite, fast sales concierge at "New Chiko Watch & Electronics", selling watches and electronics (Smartwatches, TWS Earbuds, Power Banks, Chargers, Bluetooth Speakers, Vapes/Pods, Bottles, and Gadgets).
+- Reply in the exact language/style the customer uses: Bangla (বাংলা), Banglish (e.g. "vape ache?", "2000 takar niche ki ase?"), or English.
+- Only recommend items from Store Catalog JSON. Use offer_price_bdt (৳) as the selling price. Never invent items or mention wholesale cost.
+- Return matching item "id" values in recommendedWatchIds (up to 4).
+- Keep replies short (1-3 sentences), friendly, and crisp for mobile shoppers.
 
 Store Catalog JSON:
 ${JSON.stringify(publicCatalog)}`,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              reply: { type: Type.STRING },
-              recommendedWatchIds: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                reply: { type: Type.STRING },
+                recommendedWatchIds: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
               },
+              required: ['reply', 'recommendedWatchIds'],
             },
-            required: ['reply', 'recommendedWatchIds'],
           },
         },
-      });
+        8500
+      );
 
       const parsed = JSON.parse((response.text ?? '{}').trim());
-      return res.json(parsed);
+      const validIds = new Set(publicCatalog.map((c) => c.id));
+      const recommendedWatchIds = Array.isArray(parsed.recommendedWatchIds)
+        ? parsed.recommendedWatchIds
+            .filter((id: unknown): id is string => typeof id === 'string' && validIds.has(id))
+            .slice(0, 4)
+        : [];
+      return res.json({
+        reply: typeof parsed.reply === 'string' && parsed.reply.trim()
+          ? parsed.reply.trim()
+          : 'Here are the matching items from our store:',
+        recommendedWatchIds,
+      });
     } catch (error) {
-      console.error('Shop Chatbot error:', error);
-      return res.status(500).json({
+      const status = extractHttpStatus(error);
+      console.error('Shop Chatbot error:', status, error instanceof Error ? error.message.slice(0, 200) : error);
+      return res.status(status).json({
         error: formatFriendlyAiError(
           error,
           'The shop concierge is temporarily unavailable. Please try again in a moment.'
         ),
       });
+    }
+  });
+
+  // Read-only Showcase Helpers (CORS-safe image proxy + Google Search grounded full-body product lookup; zero cloud storage writes)
+  const isSafeExternalUrl = (rawUrl: string): boolean => {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+      const host = parsed.hostname.toLowerCase();
+      if (
+        !host ||
+        host === 'localhost' ||
+        host === '::1' ||
+        host.endsWith('.local') ||
+        host.endsWith('.internal') ||
+        /^127\./.test(host) ||
+        /^10\./.test(host) ||
+        /^0\./.test(host) ||
+        /^192\.168\./.test(host) ||
+        /^169\.254\./.test(host) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+      ) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const detectImageMimeFromMagic = (buf: Buffer): string | null => {
+    if (buf.length < 12) return null;
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+    if (
+      buf.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      buf.subarray(8, 12).toString('ascii') === 'WEBP'
+    ) {
+      return 'image/webp';
+    }
+    return null;
+  };
+
+  const fetchVerifiedImageBytes = async (
+    candidateUrl: string,
+    timeoutMs = 5000
+  ): Promise<{ contentType: string; buffer: Buffer } | null> => {
+    if (!isSafeExternalUrl(candidateUrl)) return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const upstream = await fetch(candidateUrl, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      });
+      if (!upstream.ok) return null;
+      const ct = (upstream.headers.get('content-type') || '').toLowerCase();
+      if (ct.includes('svg') || ct.includes('text/html')) return null;
+      const arr = await upstream.arrayBuffer();
+      if (arr.byteLength < 3500 || arr.byteLength > 5 * 1024 * 1024) return null;
+      const buf = Buffer.from(arr);
+      const magicMime = detectImageMimeFromMagic(buf);
+      if (ct.startsWith('image/')) {
+        return { contentType: ct.split(';')[0] || magicMime || 'image/jpeg', buffer: buf };
+      }
+      if (magicMime) {
+        return { contentType: magicMime, buffer: buf };
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const extractOgImagesFromPage = async (pageUrl: string, depth = 0): Promise<string[]> => {
+    if (!isSafeExternalUrl(pageUrl) || depth > 1) return [];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5800);
+    try {
+      const pageRes = await fetch(pageUrl, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      });
+      if (!pageRes.ok) return [];
+      const finalUrl = pageRes.url || pageUrl;
+      const ct = (pageRes.headers.get('content-type') || '').toLowerCase();
+      if (ct.startsWith('image/') && !ct.includes('svg')) {
+        return [finalUrl];
+      }
+      if (!ct.includes('text/html') && !ct.includes('application/xhtml')) return [];
+      const html = (await pageRes.text()).slice(0, 320000);
+
+      // Follow meta-refresh redirects if a search redirect link uses HTML refresh
+      if (depth === 0) {
+        const refreshMatch = html.match(
+          /<meta[^>]+http-equiv=["']refresh["'][^>]+content=["'][^"']*url=([^"'\s>]+)["']/i
+        );
+        if (refreshMatch?.[1]) {
+          try {
+            const target = new URL(refreshMatch[1].trim(), finalUrl).toString();
+            return extractOgImagesFromPage(target, 1);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      const found: string[] = [];
+      const addResolved = (raw: string) => {
+        const clean = raw.trim().replace(/&amp;/g, '&');
+        if (!clean || clean.startsWith('data:') || /\.svg(?:\?|$)/i.test(clean)) return;
+        if (/(favicon|sprite|pixel|tracking|logo-small|avatar|badge|placeholder)/i.test(clean)) return;
+        try {
+          const abs = new URL(clean, finalUrl).toString();
+          if (isSafeExternalUrl(abs)) found.push(abs);
+        } catch {
+          // skip invalid
+        }
+      };
+
+      const metaMatches = html.matchAll(
+        /<meta[^>]+(?:property|name)=["'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["'][^>]+content=["']([^"']+)["'][^>]*>|<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image|og:image:secure_url|twitter:image|twitter:image:src)["'][^>]*>/gi
+      );
+      for (const m of metaMatches) {
+        addResolved(m[1] || m[2] || '');
+      }
+
+      const linkMatches = html.matchAll(
+        /<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["'][^>]*>/gi
+      );
+      for (const m of linkMatches) {
+        addResolved(m[1] || '');
+      }
+
+      const jsonLdImages = html.matchAll(/"image"\s*:\s*(?:\[\s*)?"(https?:\/\/[^"]+)"/gi);
+      for (const m of jsonLdImages) {
+        addResolved(m[1] || '');
+      }
+
+      const imgTagMatches = html.matchAll(
+        /<img[^>]+(?:data-zoom-image|data-large_image|data-src|src)=["']([^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["'][^>]*>/gi
+      );
+      for (const m of imgTagMatches) {
+        addResolved(m[1] || '');
+        if (found.length >= 10) break;
+      }
+
+      return Array.from(new Set(found)).slice(0, 6);
+    } catch {
+      return [];
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const fetchBingImageUrls = async (query: string): Promise<string[]> => {
+    const cleanQ = query.trim();
+    if (!cleanQ) return [];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    try {
+      const searchUrl = `https://www.bing.com/images/async?q=${encodeURIComponent(
+        cleanQ
+      )}&first=1&count=12`;
+      const res = await fetch(searchUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      });
+      if (!res.ok) return [];
+      const html = await res.text();
+      const matches = html.matchAll(/murl&quot;:&quot;(https?:\/\/[^&]+)&quot;/gi);
+      const urls: string[] = [];
+      for (const m of matches) {
+        const candidate = (m[1] || '').replace(/\\u002f/gi, '/').trim();
+        if (
+          candidate &&
+          isSafeExternalUrl(candidate) &&
+          !/(alamy|shutterstock|istockphoto|dreamstime|123rf|depositphotos|gettyimages)/i.test(
+            candidate
+          )
+        ) {
+          urls.push(candidate);
+        }
+      }
+      return Array.from(new Set(urls)).slice(0, 10);
+    } catch {
+      return [];
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  app.get('/api/showcase/proxy-image', async (req: Request, res: Response) => {
+    const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    const img = await fetchVerifiedImageBytes(rawUrl, 5500);
+    if (!img) {
+      return res.status(404).json({ error: 'Unable to load product image.' });
+    }
+    res.setHeader('Content-Type', img.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.send(img.buffer);
+  });
+
+  // Read-only Gemini Vision + Metadata Inspector: separates device body from retail boxes AND returns universal animation/background config for any product
+  app.post('/api/showcase/subject-box', async (req: Request, res: Response) => {
+    try {
+      const {
+        imageUrl,
+        productName,
+        brand,
+        model,
+        category,
+        color,
+        description,
+        capacitySpec,
+        connectivity,
+      } = req.body ?? {};
+
+      let resolvedBase64 = '';
+      let resolvedMime = 'image/jpeg';
+      if (typeof imageUrl === 'string' && imageUrl.trim()) {
+        const parsedData = parseDataUrl(imageUrl.trim());
+        if (parsedData) {
+          resolvedBase64 = parsedData.data;
+          resolvedMime = parsedData.mimeType;
+        } else if (isSafeExternalUrl(imageUrl.trim())) {
+          const fetched = await fetchVerifiedImageBytes(imageUrl.trim(), 4500);
+          if (fetched) {
+            resolvedBase64 = fetched.buffer.toString('base64');
+            resolvedMime = fetched.contentType;
+          }
+        }
+      }
+
+      const defaultQuery = [brand, model, productName].filter(Boolean).join(' ').trim();
+      const label = [brand, model, productName, category, color, capacitySpec, connectivity]
+        .filter(Boolean)
+        .join(' · ');
+
+      const parts: Part[] = [];
+      if (resolvedBase64) {
+        parts.push({
+          inlineData: {
+            mimeType: resolvedMime,
+            data: resolvedBase64,
+          },
+        });
+      }
+      parts.push({
+        text: `Inspect this product${resolvedBase64 ? ' photo and' : ''} metadata for "New Chiko Watch & Electronics":
+Product: ${label}
+Description: ${String(description || '').slice(0, 320)}
+
+1. Packaging vs Device Body Isolation${resolvedBase64 ? ' (look closely at the photo)' : ' (no image provided, set needsWebImage=true)'}:
+- hasExposedDevice: true ONLY if the actual physical device itself is clearly visible outside sealed cardboard packaging; false if closed retail box/packaging or no image.
+- isPackagingOrBox: true if retail box/packaging or cluttered shelf/hand/desk surrounds or dominates the photo.
+- needsWebImage: true if no image is available OR if a clean out-of-box studio photo would show the actual device body much more cleanly than a boxed/hand-held/blurry photo.
+- ymin, xmin, ymax, xmax: integers 0..1000 tightly bounding ONLY the actual physical product body itself (excluding retail cardboard box, packaging sleeve, hands, desk). If no image or only a full-frame box, return 0,0,1000,1000.
+- searchQuery: concise search query for a clean out-of-box studio product photo (e.g. "${defaultQuery || 'wireless electronic gadget'} studio").
+
+2. Universal Real-World Animation & Animated Background Profile:
+Classify accurately based on what this product actually is in real life:
+- productType: MUST be one of "vapor" (vapes, pod kits, humidifiers, diffusers), "power" (power banks, wall chargers, charging cables, adapters), "audio" (bluetooth speakers, earbuds, neckbands, headphones), "light" (flashlights, lamps, ring lights, lanterns), "fan" (mini fans, desk/neck/cooling fans), "watch" (analog watches, digital watches, smartwatches), "camera" (cameras, webcams, gimbals, drones), or "gadget" (any other electronic/smart accessory).
+- subVariant: one of "pod_vape", "mist_diffuser", "fan", "flashlight", "lamp", "powerbank", "charger", "cable", "analog", "digital", "smartwatch", "earbuds", "neckband", "speaker", "camera", "gadget".
+- backgroundMood: MUST match the productType's real-world environment: "energy_flow" (power), "vapor_mist" (vapor), "sonic_pulse" (audio), "light_beam" (light), "airflow_breeze" (fan), "horology_luxury" (watch), "optics_bokeh" (camera), or "cyber_aurora" (gadget).
+- realWorldObject: 2-4 word clear hardware title (e.g., "Fast Charge Power Bank", "Pod Vapor System", "Portable Bluetooth Speaker").
+- accentHex: bright glowing #RRGGBB hex matching the product's authentic LED/brand vibe (must be bright/vibrant on dark studio backgrounds).
+- secondaryHex: bright complementary #RRGGBB hex.
+- activeLabel: 3-5 words describing active power/effect (e.g., "Super-Fast Charge Surge", "Smooth Vapor Plumes Active", "Bass Waves & Beat Active").
+- idleLabel: 3-5 words ready label.
+- featureTag: 2-3 word key spec/trait.`,
+      });
+
+      const ai = createGeminiClient();
+      const response = await generateWithFallbackModel(ai, {
+        contents: { parts },
+        config: {
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              hasExposedDevice: { type: Type.BOOLEAN },
+              isPackagingOrBox: { type: Type.BOOLEAN },
+              needsWebImage: { type: Type.BOOLEAN },
+              ymin: { type: Type.INTEGER },
+              xmin: { type: Type.INTEGER },
+              ymax: { type: Type.INTEGER },
+              xmax: { type: Type.INTEGER },
+              searchQuery: { type: Type.STRING },
+              productType: { type: Type.STRING },
+              subVariant: { type: Type.STRING },
+              backgroundMood: { type: Type.STRING },
+              realWorldObject: { type: Type.STRING },
+              accentHex: { type: Type.STRING },
+              secondaryHex: { type: Type.STRING },
+              activeLabel: { type: Type.STRING },
+              idleLabel: { type: Type.STRING },
+              featureTag: { type: Type.STRING },
+            },
+            required: [
+              'hasExposedDevice',
+              'isPackagingOrBox',
+              'needsWebImage',
+              'ymin',
+              'xmin',
+              'ymax',
+              'xmax',
+              'searchQuery',
+              'productType',
+              'subVariant',
+              'backgroundMood',
+              'realWorldObject',
+              'accentHex',
+              'secondaryHex',
+              'activeLabel',
+              'idleLabel',
+              'featureTag',
+            ],
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text ?? '{}').trim()) as Record<string, unknown>;
+
+      const ymin = Math.max(0, Math.min(950, Number(parsed.ymin ?? 0)));
+      const xmin = Math.max(0, Math.min(950, Number(parsed.xmin ?? 0)));
+      const ymax = Math.max(ymin + 40, Math.min(1000, Number(parsed.ymax ?? 1000)));
+      const xmax = Math.max(xmin + 40, Math.min(1000, Number(parsed.xmax ?? 1000)));
+      const isUsefulCrop = Boolean(resolvedBase64) && (xmax - xmin < 970 || ymax - ymin < 970);
+
+      return res.json({
+        hasExposedDevice: resolvedBase64 ? Boolean(parsed.hasExposedDevice) : false,
+        isPackagingOrBox: Boolean(parsed.isPackagingOrBox),
+        needsWebImage: resolvedBase64 ? Boolean(parsed.needsWebImage) : true,
+        deviceBox: isUsefulCrop ? { ymin, xmin, ymax, xmax } : null,
+        searchQuery:
+          typeof parsed.searchQuery === 'string' && parsed.searchQuery.trim()
+            ? parsed.searchQuery.trim()
+            : defaultQuery,
+        productType: typeof parsed.productType === 'string' ? parsed.productType.trim().toLowerCase() : '',
+        subVariant: typeof parsed.subVariant === 'string' ? parsed.subVariant.trim().toLowerCase() : '',
+        backgroundMood:
+          typeof parsed.backgroundMood === 'string' ? parsed.backgroundMood.trim().toLowerCase() : '',
+        realWorldObject: typeof parsed.realWorldObject === 'string' ? parsed.realWorldObject.trim() : '',
+        accentHex: typeof parsed.accentHex === 'string' ? parsed.accentHex.trim() : '',
+        secondaryHex: typeof parsed.secondaryHex === 'string' ? parsed.secondaryHex.trim() : '',
+        activeLabel: typeof parsed.activeLabel === 'string' ? parsed.activeLabel.trim() : '',
+        idleLabel: typeof parsed.idleLabel === 'string' ? parsed.idleLabel.trim() : '',
+        featureTag: typeof parsed.featureTag === 'string' ? parsed.featureTag.trim() : '',
+      });
+    } catch {
+      return res.json({
+        hasExposedDevice: true,
+        isPackagingOrBox: false,
+        needsWebImage: false,
+        deviceBox: null,
+        searchQuery: '',
+      });
+    }
+  });
+
+  app.post('/api/showcase/lookup-image', async (req: Request, res: Response) => {
+    try {
+      const { productName, brand, model, category, color, customQuery } = req.body ?? {};
+      const cleanBrand =
+        typeof brand === 'string' && brand.trim() && brand.trim().toLowerCase() !== 'generic'
+          ? brand.trim()
+          : '';
+      const cleanModel = typeof model === 'string' ? model.trim() : '';
+      const cleanName = typeof productName === 'string' ? productName.trim() : '';
+
+      const baseQuery =
+        typeof customQuery === 'string' && customQuery.trim()
+          ? customQuery.trim()
+          : [cleanBrand, cleanModel, cleanName || category, color]
+              .filter((s) => typeof s === 'string' && s.trim())
+              .join(' ')
+              .trim();
+
+      if (!baseQuery) {
+        return res.json({ imageUrl: null, candidateUrls: [], sourceTitle: '' });
+      }
+
+      const verifiedCandidates: string[] = [];
+      const addVerifiedBatch = async (urls: string[], limit = 6) => {
+        const subset = Array.from(new Set(urls))
+          .filter((u) => !verifiedCandidates.includes(u))
+          .slice(0, limit);
+        if (!subset.length) return;
+        const checks = await Promise.all(
+          subset.map(async (u) => ({ url: u, ok: await fetchVerifiedImageBytes(u, 3600) }))
+        );
+        for (const c of checks) {
+          if (c.ok && !verifiedCandidates.includes(c.url)) {
+            verifiedCandidates.push(c.url);
+          }
+        }
+      };
+
+      // 1. Primary visual search for clean out-of-box studio product image
+      const compactModelQuery = [cleanBrand, cleanModel || cleanName, category || '']
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      const bingUrls = await fetchBingImageUrls(`${compactModelQuery || baseQuery} product`);
+      await addVerifiedBatch(bingUrls, 6);
+
+      if (verifiedCandidates.length === 0) {
+        const bingBroadUrls = await fetchBingImageUrls(baseQuery);
+        await addVerifiedBatch(bingBroadUrls, 6);
+      }
+
+      // 2. Gemini Google Search Grounding (if primary yielded < 2 candidates)
+      if (verifiedCandidates.length < 2) {
+        const directImgUrls: string[] = [];
+        const pageUrls: Array<{ uri: string; title: string }> = [];
+        try {
+          const ai = createGeminiClient();
+          const response = await generateWithFallbackModel(ai, {
+            contents: `Search the web for the product "${baseQuery}". Find pages or direct studio product photo URLs (.jpg, .png, .webp) showing the device itself clearly.`,
+            config: {
+              tools: [{ googleSearch: {} }],
+            },
+          });
+
+          const textUrls = (response.text || '').match(/https?:\/\/[^\s"'<>)\]]+/gi) || [];
+          for (const u of textUrls) {
+            const clean = u.replace(/[.,;)]+$/, '');
+            if (/\.(png|jpe?g|webp)(?:\?|$)/i.test(clean)) {
+              directImgUrls.push(clean);
+            } else {
+              pageUrls.push({ uri: clean, title: baseQuery });
+            }
+          }
+
+          const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+          if (Array.isArray(chunks)) {
+            for (const chunk of chunks) {
+              const uri = chunk?.web?.uri;
+              const title = chunk?.web?.title || baseQuery;
+              if (typeof uri === 'string' && uri.startsWith('http')) {
+                if (/\.(png|jpe?g|webp)(?:\?|$)/i.test(uri)) {
+                  directImgUrls.push(uri);
+                } else {
+                  pageUrls.push({ uri, title });
+                }
+              }
+            }
+          }
+
+          await addVerifiedBatch(directImgUrls, 4);
+          if (verifiedCandidates.length === 0) {
+            for (const page of pageUrls.slice(0, 3)) {
+              const ogCandidates = await extractOgImagesFromPage(page.uri);
+              await addVerifiedBatch(ogCandidates, 3);
+              if (verifiedCandidates.length >= 2) break;
+            }
+          }
+        } catch {
+          // ignore Gemini search errors cleanly
+        }
+      }
+
+      // 3. Fallback: Wikimedia Commons & Wikipedia exact product search
+      if (verifiedCandidates.length === 0) {
+        try {
+          const shortQuery = [cleanBrand, cleanModel].filter(Boolean).join(' ').trim() || baseQuery;
+          const commonsUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+            shortQuery
+          )}&gsrnamespace=6&gsrlimit=4&prop=imageinfo&iiprop=url|mime&iiurlwidth=720&format=json&origin=*`;
+          const cRes = await fetch(commonsUrl, {
+            headers: { 'User-Agent': 'NewChikoWatchShowcase/1.0' },
+          });
+          if (cRes.ok) {
+            const cData = (await cRes.json()) as {
+              query?: {
+                pages?: Record<
+                  string,
+                  {
+                    imageinfo?: Array<{ url?: string; thumburl?: string; mime?: string }>;
+                  }
+                >;
+              };
+            };
+            const wikiImgs: string[] = [];
+            for (const p of Object.values(cData?.query?.pages || {})) {
+              const info = p.imageinfo?.[0];
+              const imgSrc = info?.thumburl || info?.url;
+              if (imgSrc && (!info?.mime || /image\/(jpeg|png|webp)/i.test(info.mime))) {
+                wikiImgs.push(imgSrc);
+              }
+            }
+            await addVerifiedBatch(wikiImgs, 3);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      return res.json({
+        imageUrl: verifiedCandidates[0] || null,
+        candidateUrls: verifiedCandidates.slice(0, 4),
+        sourceTitle: baseQuery,
+      });
+    } catch (error) {
+      const status = extractHttpStatus(error);
+      console.warn('Showcase image lookup error:', status);
+      return res.json({ imageUrl: null, candidateUrls: [], sourceTitle: '' });
+    }
+  });
+
+  // Helper: fetch real live online search text snippets (Bing/DuckDuckGo) with zero API quota limits
+  const fetchLiveWebSearchSnippets = async (query: string): Promise<string> => {
+    if (!query.trim()) return '';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    try {
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      const res = await fetch(ddgUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          Accept: 'text/html',
+        },
+      });
+      if (res.ok) {
+        const html = await res.text();
+        const plain = html
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/&#x27;/g, "'")
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (plain.length > 80) {
+          return plain.slice(0, 2600);
+        }
+      }
+    } catch {
+      // fall through to Bing web search
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const controller2 = new AbortController();
+    const timer2 = setTimeout(() => controller2.abort(), 4500);
+    try {
+      const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+      const res2 = await fetch(bingUrl, {
+        signal: controller2.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          Accept: 'text/html',
+        },
+      });
+      if (!res2.ok) return '';
+      const html = await res2.text();
+      return html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 2600);
+    } catch {
+      return '';
+    } finally {
+      clearTimeout(timer2);
+    }
+  };
+
+  const classifyActionKindFromOnlineText = (
+    combinedText: string,
+    categoryText: string
+  ): {
+    actionKind: 'vapor' | 'liquid' | 'power' | 'audio' | 'fan' | 'light' | 'watch' | 'universal';
+    verifiedProductType: string;
+  } => {
+    const text = combinedText.toLowerCase();
+    const cat = categoryText.toLowerCase();
+
+    // Strictly check Vape / Pod / Humidifier FIRST (never hijacked by 1000mAh or Type-C!)
+    if (
+      /\b(vape|vaping|pod\s*kit|pod\s*system|disposable\s*vape|pre[\s-]*filled\s*pod|prelled\s*pod|puffs?|e-cig|e-cigarette|e-liquid|nicotine|nic\s*salt|salt\s*nic|mesh\s*coil|oxva|xlim|voopoo|uwell|caliburn|vaporesso|xros|elf\s*bar|elfbar|vozol|d-breath|waka|iget|geek\s*bar|lost\s*mary|relx|shisha|hookah|humidifier|aroma\s*diffuser)\b/.test(
+        text
+      )
+    ) {
+      return { actionKind: 'vapor', verifiedProductType: 'Vape / Pod Vapor Device' };
+    }
+
+    if (
+      /\b(water\s*bottle|insulated\s*bottle|thermos|vacuum\s*flask|tumbler|stanley\s*quencher|hydro\s*flask|sipper|perfume|eau\s*de\s*parfum|cologne|attar|body\s*mist|spray\s*bottle)\b/.test(
+        text
+      )
+    ) {
+      return { actionKind: 'liquid', verifiedProductType: 'Bottle / Liquid Vessel' };
+    }
+
+    if (
+      /\b(bluetooth\s*speaker|wireless\s*speaker|portable\s*speaker|soundbar|subwoofer|ktx-\d+|jbl\s*(flip|charge|go|clip)|tws|earbuds?|earphones?|airpods?|headphones?|neckband|microphone)\b/.test(
+        text
+      ) ||
+      cat.includes('speaker') ||
+      cat.includes('earbud') ||
+      cat.includes('neckband')
+    ) {
+      return { actionKind: 'audio', verifiedProductType: 'Wireless Audio Device' };
+    }
+
+    if (
+      /\b(mini\s*fan|portable\s*fan|neck\s*fan|desk\s*fan|cooling\s*fan|handheld\s*fan|air\s*cooler|hair\s*dryer)\b/.test(
+        text
+      )
+    ) {
+      return { actionKind: 'fan', verifiedProductType: 'Cooling / Airflow Fan' };
+    }
+
+    if (
+      /\b(flashlight|torch\s*light|desk\s*lamp|table\s*lamp|ring\s*light|led\s*lamp|lantern|night\s*light|headlamp|spotlight)\b/.test(
+        text
+      )
+    ) {
+      return { actionKind: 'light', verifiedProductType: 'Lighting Device' };
+    }
+
+    if (
+      /\b(wristwatch|analog\s*watch|digital\s*watch|smartwatch|smart\s*watch|chronograph|quartz\s*watch|automatic\s*watch|rolex|casio|g-shock|seiko|tissot|fossil|omega|citizen)\b/.test(
+        text
+      ) ||
+      cat.includes('watch')
+    ) {
+      return { actionKind: 'watch', verifiedProductType: 'Signature Timepiece' };
+    }
+
+    if (
+      /\b(power\s*bank|powerbank|wall\s*charger|fast\s*charger|gan\s*charger|charging\s*adapter|power\s*adapter|charging\s*cable|magsafe\s*battery|portable\s*charger)\b/.test(
+        text
+      ) ||
+      cat.includes('power bank') ||
+      cat.includes('charger')
+    ) {
+      return { actionKind: 'power', verifiedProductType: 'Fast Charging Power Bank / Charger' };
+    }
+
+    return { actionKind: 'universal', verifiedProductType: 'Smart Lifestyle Product' };
+  };
+
+  // Online Web Search + Vision Product Identifier: searches the internet for exact model/product first so vapes never get misclassified as chargers/power banks
+  app.post('/api/showcase/identify-product', async (req: Request, res: Response) => {
+    try {
+      const {
+        imageUrl,
+        productName,
+        brand,
+        model,
+        category,
+        color,
+        description,
+        capacitySpec,
+        connectivity,
+      } = req.body ?? {};
+
+      const querySubject = [brand, model, productName]
+        .filter((s) => typeof s === 'string' && s.trim() && s.trim().toLowerCase() !== 'generic')
+        .join(' ')
+        .trim();
+      const fullLabel = [brand, model, productName, category, color, capacitySpec, connectivity]
+        .filter((s) => typeof s === 'string' && s.trim())
+        .join(' · ');
+
+      // 1. Run live online web search FIRST for exact real-world product context
+      const onlineSnippets = await fetchLiveWebSearchSnippets(
+        querySubject || String(productName || model || '')
+      );
+
+      // 2. Try Gemini Google Search Grounding + Vision refinement when available
+      try {
+        let resolvedBase64 = '';
+        let resolvedMime = 'image/jpeg';
+        if (typeof imageUrl === 'string' && imageUrl.trim()) {
+          const parsedData = parseDataUrl(imageUrl.trim());
+          if (parsedData) {
+            resolvedBase64 = parsedData.data;
+            resolvedMime = parsedData.mimeType;
+          } else if (isSafeExternalUrl(imageUrl.trim())) {
+            const fetched = await fetchVerifiedImageBytes(imageUrl.trim(), 3500);
+            if (fetched) {
+              resolvedBase64 = fetched.buffer.toString('base64');
+              resolvedMime = fetched.contentType;
+            }
+          }
+        }
+
+        const parts: Part[] = [];
+        if (resolvedBase64) {
+          parts.push({
+            inlineData: {
+              mimeType: resolvedMime,
+              data: resolvedBase64,
+            },
+          });
+        }
+
+        parts.push({
+          text: `You are a product specialist for "New Chiko Watch & Electronics".
+Inspect the online search snippets AND product photo/details below to accurately identify what "${querySubject || fullLabel}" really is.
+Product details: ${fullLabel}
+Description: ${String(description || '').slice(0, 320)}
+Online search snippets: ${onlineSnippets.slice(0, 1400) || '(none)'}
+
+CRITICAL RULES:
+- Any vape, pod kit, disposable puff bar, e-cigarette, humidifier, or aroma diffuser MUST be "vapor" — NEVER "power", even if it mentions "1000mAh" or "Type-C"!
+- Any water bottle, thermos, tumbler, flask, mug, perfume, or spray MUST be "liquid".
+- Any speaker, earbuds, neckband, or headphones MUST be "audio" — NEVER "power".
+- Only classify as "power" if its primary purpose is charging other devices (power bank, wall charger, charging cable, adapter).
+- Mini fan / air cooler / hair dryer -> "fan".
+- Flashlight / lamp / ring light / lantern -> "light".
+- Analog / digital / smartwatch -> "watch".
+- Everything else -> "universal".
+
+Return ONLY raw JSON:
+{"actionKind":"vapor"|"liquid"|"power"|"audio"|"fan"|"light"|"watch"|"universal","verifiedProductType":"2-5 word real type","title":"2-3 word studio title","activeLabel":"2-4 word active label","tap2Prompt":"short tap prompt"}`,
+        });
+
+        const ai = createGeminiClient();
+        const response = await generateWithFallbackModel(ai, {
+          contents: { parts },
+          config: {
+            tools: [{ googleSearch: {} }],
+          },
+        });
+
+        const rawText = (response.text || '').trim();
+        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+          const validKinds = new Set([
+            'vapor',
+            'liquid',
+            'power',
+            'audio',
+            'fan',
+            'light',
+            'watch',
+            'universal',
+          ]);
+          const rawKind =
+            typeof parsed.actionKind === 'string' ? parsed.actionKind.trim().toLowerCase() : '';
+          if (validKinds.has(rawKind)) {
+            return res.json({
+              verified: true,
+              source: 'gemini-online',
+              actionKind: rawKind,
+              verifiedProductType:
+                typeof parsed.verifiedProductType === 'string'
+                  ? parsed.verifiedProductType.trim().slice(0, 80)
+                  : '',
+              title: typeof parsed.title === 'string' ? parsed.title.trim().slice(0, 40) : '',
+              activeLabel:
+                typeof parsed.activeLabel === 'string'
+                  ? parsed.activeLabel.trim().slice(0, 48)
+                  : '',
+              tap2Prompt:
+                typeof parsed.tap2Prompt === 'string' ? parsed.tap2Prompt.trim().slice(0, 56) : '',
+            });
+          }
+        }
+      } catch (aiErr) {
+        console.warn('Gemini online search fallback to live web snippets:', extractHttpStatus(aiErr));
+      }
+
+      // 3. Always-on Live Web Search Classification Fallback (0 API quota dependency!)
+      const webClassification = classifyActionKindFromOnlineText(
+        `${fullLabel} ${String(description || '')} ${onlineSnippets}`,
+        String(category || '')
+      );
+      return res.json({
+        verified: true,
+        source: onlineSnippets ? 'live-web-search' : 'metadata-rules',
+        actionKind: webClassification.actionKind,
+        verifiedProductType: webClassification.verifiedProductType,
+        title: '',
+        activeLabel: '',
+        tap2Prompt: '',
+      });
+    } catch (error) {
+      const status = extractHttpStatus(error);
+      console.warn('Online product identification error:', status);
+      return res.json({ verified: false });
     }
   });
 

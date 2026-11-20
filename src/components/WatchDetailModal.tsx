@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Calculator, Lock, ReceiptText, X } from 'lucide-react';
-import { motion, useMotionTemplate, useMotionValue, useSpring } from 'motion/react';
+import { Calculator, Check, Heart, Lock, ReceiptText, Share2, X } from 'lucide-react';
+import { motion } from 'motion/react';
 import { WatchItem } from '../types/watch';
+import { InteractiveProductStage } from './InteractiveProductStage';
 import { TripleTapPrice, formatBDT } from './TripleTapPrice';
-import { WatchImage } from './WatchImage';
 
 interface WatchDetailModalProps {
   watch: WatchItem;
   isAdmin: boolean;
+  isSaved?: boolean;
+  onToggleSave?: (id: string) => void;
   onClose: () => void;
   onAddToMemo: (watch: WatchItem, agreedPrice?: number) => void;
 }
@@ -21,6 +23,8 @@ function cleanIntegerInput(raw: string): string {
 export function WatchDetailModal({
   watch,
   isAdmin,
+  isSaved = false,
+  onToggleSave,
   onClose,
   onAddToMemo,
 }: WatchDetailModalProps) {
@@ -28,11 +32,35 @@ export function WatchDetailModal({
     String(watch.min_selling_price)
   );
   const [showBargainTool, setShowBargainTool] = useState<boolean>(isAdmin);
+  const [copiedShare, setCopiedShare] = useState(false);
 
   useEffect(() => {
     setCustomerOfferStr(String(watch.min_selling_price));
     setShowBargainTool(isAdmin);
+    setCopiedShare(false);
   }, [watch, isAdmin]);
+
+  const handleShareDetails = async () => {
+    const title = watch.product_name || `${watch.brand} ${watch.model}`;
+    const summary = `${title} (${watch.brand} ${watch.model}) — Offer Price: ${formatBDT(
+      watch.min_selling_price
+    )} at New Chiko Watch & Electronics\n${window.location.href}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text: summary, url: window.location.href });
+        return;
+      }
+    } catch {
+      // fall through to clipboard copy
+    }
+    try {
+      await navigator.clipboard.writeText(summary);
+      setCopiedShare(true);
+      window.setTimeout(() => setCopiedShare(false), 2200);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
 
   const customerOffer = Number(customerOfferStr) || 0;
   const netProfit = customerOffer - watch.real_buying_price;
@@ -45,36 +73,6 @@ export function WatchDetailModal({
       : customerOffer < watch.min_selling_price
       ? { label: 'Below Floor — Tight Margin', tone: 'text-amber-700' }
       : { label: 'Healthy Deal — Above Minimum Floor', tone: 'text-emerald-700' };
-
-  const showcaseRotateX = useMotionValue(0);
-  const showcaseRotateY = useMotionValue(0);
-  const showcaseGlareX = useMotionValue(50);
-  const showcaseGlareY = useMotionValue(50);
-  const showcaseActive = useMotionValue(0);
-
-  const smoothRotateX = useSpring(showcaseRotateX, { stiffness: 250, damping: 20 });
-  const smoothRotateY = useSpring(showcaseRotateY, { stiffness: 250, damping: 20 });
-  const showcaseGlare = useMotionTemplate`radial-gradient(circle at ${showcaseGlareX}% ${showcaseGlareY}%, rgba(255,255,255,0.62), rgba(255,255,255,0) 62%)`;
-
-  const applyShowcaseTilt = (e: React.PointerEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const px = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const py = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    showcaseRotateX.set((0.5 - py) * 18);
-    showcaseRotateY.set((px - 0.5) * 18);
-    showcaseGlareX.set(px * 100);
-    showcaseGlareY.set(py * 100);
-    showcaseActive.set(1);
-  };
-
-  const resetShowcaseTilt = () => {
-    showcaseRotateX.set(0);
-    showcaseRotateY.set(0);
-    showcaseGlareX.set(50);
-    showcaseGlareY.set(50);
-    showcaseActive.set(0);
-  };
 
   return (
     <motion.div
@@ -115,61 +113,55 @@ export function WatchDetailModal({
               {watch.product_name || watch.model}
             </h2>
           </div>
-          <motion.button
-            type="button"
-            onClick={onClose}
-            whileHover={{ scale: 1.06, rotate: 90 }}
-            whileTap={{ scale: 0.88 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 24 }}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200 transition-colors cursor-pointer"
-            aria-label="Close product details"
-          >
-            <X size={20} />
-          </motion.button>
+          <div className="flex items-center gap-2 shrink-0">
+            {onToggleSave && (
+              <motion.button
+                type="button"
+                onClick={() => onToggleSave(watch.id)}
+                whileTap={{ scale: 0.86 }}
+                className={`min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl border transition-colors cursor-pointer ${
+                  isSaved
+                    ? 'bg-rose-50 border-rose-200 text-rose-600'
+                    : 'bg-zinc-50 border-zinc-200 text-zinc-600 hover:text-zinc-950'
+                }`}
+                aria-label={isSaved ? 'Remove from saved shortlist' : 'Save product'}
+                title={isSaved ? 'Saved' : 'Save'}
+              >
+                <Heart size={18} className={isSaved ? 'fill-rose-600' : ''} />
+              </motion.button>
+            )}
+            <motion.button
+              type="button"
+              onClick={handleShareDetails}
+              whileTap={{ scale: 0.86 }}
+              className="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-950 transition-colors cursor-pointer"
+              aria-label="Share product details"
+              title={copiedShare ? 'Copied details!' : 'Share / Copy'}
+            >
+              {copiedShare ? (
+                <Check size={17} className="text-emerald-600" />
+              ) : (
+                <Share2 size={17} />
+              )}
+            </motion.button>
+            <motion.button
+              type="button"
+              onClick={onClose}
+              whileHover={{ scale: 1.06, rotate: 90 }}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 24 }}
+              className="min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200 transition-colors cursor-pointer"
+              aria-label="Close product details"
+            >
+              <X size={20} />
+            </motion.button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 md:p-6">
-          {/* Left: Levitating Interactive 3D Product Showcase */}
+          {/* Left: Aesthetic Studio Photo & 2-Tap Interactive Video Stage */}
           <div className="space-y-4">
-            <div style={{ perspective: 950 }}>
-              <motion.div
-                animate={{ y: [0, -5, 0] }}
-                transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-              >
-                <motion.div
-                  onPointerDown={applyShowcaseTilt}
-                  onPointerMove={applyShowcaseTilt}
-                  onPointerLeave={resetShowcaseTilt}
-                  onPointerUp={resetShowcaseTilt}
-                  onPointerCancel={resetShowcaseTilt}
-                  whileHover={{ scale: 1.03 }}
-                  style={{
-                    rotateX: smoothRotateX,
-                    rotateY: smoothRotateY,
-                    transformStyle: 'preserve-3d',
-                    touchAction: 'pan-y',
-                  }}
-                  className="group relative aspect-[4/3] w-full rounded-xl overflow-hidden bg-[#F4F4F5] border border-zinc-200 shadow-md will-change-transform cursor-grab active:cursor-grabbing"
-                >
-                  <div style={{ transform: 'translateZ(20px)' }} className="w-full h-full">
-                    <WatchImage
-                      src={watch.image_url}
-                      alt={`${watch.brand} ${watch.model}`}
-                      brand={watch.brand}
-                      model={watch.model}
-                      category={watch.category}
-                      iconSize={52}
-                      className="transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-105"
-                    />
-                  </div>
-                  <motion.div
-                    aria-hidden="true"
-                    style={{ background: showcaseGlare }}
-                    className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mix-blend-overlay"
-                  />
-                </motion.div>
-              </motion.div>
-            </div>
+            <InteractiveProductStage watch={watch} isAdmin={isAdmin} />
 
             <motion.div
               initial={{ opacity: 0, y: 14 }}

@@ -58,11 +58,14 @@ export function ShopChatbot({
     if (!textToSend) setInput('');
     setSending(true);
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 24000);
     try {
       const lightCatalog = watches.map(({ image_url: _img, ...rest }) => rest);
       const res = await fetch('/api/gemini/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           message: query,
           history: nextHistory.map((m) => ({ role: m.role, text: m.text })),
@@ -89,9 +92,11 @@ export function ShopChatbot({
       };
       setMessages((prev) => [...prev, botMsg]);
     } catch (err) {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
       const rawMsg = err instanceof Error ? err.message : '';
-      const cleanMsg =
-        rawMsg && !rawMsg.trim().startsWith('{')
+      const cleanMsg = isAbort
+        ? 'The concierge took a little longer than usual. Please tap Send again for an instant reply.'
+        : rawMsg && !rawMsg.trim().startsWith('{')
           ? rawMsg
           : 'Sorry, the concierge could not respond right now. Please try again in a moment.';
       const errMsg: ChatMessage = {
@@ -102,6 +107,7 @@ export function ShopChatbot({
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
+      window.clearTimeout(timeoutId);
       setSending(false);
     }
   };
